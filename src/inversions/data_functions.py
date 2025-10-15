@@ -29,7 +29,10 @@ from openghg_inversions.inversion_data.getters import (
     get_obs_data,
 )
 from openghg_inversions.inversion_data.scenario import merged_scenario_data
-from openghg_inversions.inversion_data.serialise import _save_merged_data, _make_merged_data_name
+from openghg_inversions.inversion_data.serialise import (
+    _save_merged_data,
+    _make_merged_data_name,
+)
 
 
 read_ini = partial(hbmcmc_extract_param, mcmc_type="fixedbasisMCMC", print_param=False)
@@ -39,6 +42,7 @@ read_ini = partial(hbmcmc_extract_param, mcmc_type="fixedbasisMCMC", print_param
 # with a class method for parsing these data objects
 #
 # As it is, the arguments for MultiObs.__init__ are unwieldy...
+
 
 class MultiObs(ObsData):
     def __init__(
@@ -88,7 +92,9 @@ class MultiObs(ObsData):
         # will set these after we fetch the first dataset
         target_units = None
 
-        for site, inlet, avg, data_level, instrument in zip(self._sites, self._inlets, self.average, obs_data_levels, instruments):
+        for site, inlet, avg, data_level, instrument in zip(
+            self._sites, self._inlets, self.average, obs_data_levels, instruments
+        ):
             try:
                 obs = get_obs_surface(
                     species=self.species,
@@ -106,14 +112,19 @@ class MultiObs(ObsData):
                     **self.kwargs,
                 )
             except Exception as e:
-                print(f"Couldn't get obs for site {site} and inlet {inlet} from store {self.store}: {e}")
+                print(
+                    f"Couldn't get obs for site {site} and inlet {inlet} from store {self.store}: {e}"
+                )
             else:
                 self.obs[site] = obs
                 self.sites.append(site)
                 self.inlets.append(inlet)
 
                 if target_units is None:
-                    target_units = {dv: obs.data.mf.attrs["units"] for dv in ("mf", "mf_repeatability", "mf_variability")}
+                    target_units = {
+                        dv: obs.data.mf.attrs["units"]
+                        for dv in ("mf", "mf_repeatability", "mf_variability")
+                    }
 
                 if calibration_scale is None:
                     calibration_scale = obs.metadata.get("calibration_scale")
@@ -127,7 +138,8 @@ class MultiObs(ObsData):
         self.units = target_units
 
         self._combined_ds = xr.concat(
-            [x.data.expand_dims(site=[site]) for site, x in self.obs.items()], dim="site"
+            [x.data.expand_dims(site=[site]) for site, x in self.obs.items()],
+            dim="site",
         )
 
     def combined_ds(self) -> xr.Dataset:
@@ -223,7 +235,8 @@ class MultiFootprint:
                 self.met_model.append(met_mod)
 
         self._combined_ds = xr.concat(
-            [x.data.expand_dims(site=[site]) for site, x in self.footprints.items()], dim="site"
+            [x.data.expand_dims(site=[site]) for site, x in self.footprints.items()],
+            dim="site",
         )
 
     def combined_ds(self) -> xr.Dataset:
@@ -330,7 +343,6 @@ def data_processing(
         obs_sites=multi_obs.sites,
     )
 
-
     split_by_sectors = len(flux_dict) > 1
 
     # create fp_all dict
@@ -379,15 +391,28 @@ def rechunk_ds(ds: xr.Dataset, time: int = 240, **kwargs) -> xr.Dataset:
     return ds.chunk(chunks)
 
 
-def fp_all_to_datatree(fp_all: dict, name: str | None = None, rechunk: bool = True, chunks: dict | None = None) -> xr.DataTree:
+def fp_all_to_datatree(
+    fp_all: dict,
+    name: str | None = None,
+    rechunk: bool = True,
+    chunks: dict | None = None,
+) -> xr.DataTree:
     scenario = {k: v for k, v in fp_all.items() if not k.startswith(".")}
-    attrs = {k.removeprefix("."): v for k, v in fp_all.items() if k in [".species", ".scales", ".units"]}
-    aux_data = {k.removeprefix("."): v for k, v in fp_all.items() if (k not in scenario) and (k.removeprefix(".") not in attrs)}
+    attrs = {
+        k.removeprefix("."): v
+        for k, v in fp_all.items()
+        if k in [".species", ".scales", ".units"]
+    }
+    aux_data = {
+        k.removeprefix("."): v
+        for k, v in fp_all.items()
+        if (k not in scenario) and (k.removeprefix(".") not in attrs)
+    }
 
     # nest flux (this can be done automatically from nested dict according to xarray docs, but
     # it doesn't work for me... maybe I need to update xarray
-    #aux_data["/flux"] = xr.DataTree.from_dict({k: v.data for k, v in aux_data["flux"].items()})
-    #del aux_data["flux"]
+    # aux_data["/flux"] = xr.DataTree.from_dict({k: v.data for k, v in aux_data["flux"].items()})
+    # del aux_data["flux"]
 
     # "flux" as a dataset... this might not work if we're mixing high/low frequency fluxes
     # but it works for multiple sectors
@@ -429,7 +454,9 @@ def fp_all_to_datatree(fp_all: dict, name: str | None = None, rechunk: bool = Tr
 def datatree_to_fp_all(dt: xr.DataTree) -> dict:
     d = dt.to_dict()
     result = {}
-    result[".flux"] = {dv: FluxData(data=d["/flux"][[dv]], metadata={}) for dv in d["/flux"].data_vars}
+    result[".flux"] = {
+        dv: FluxData(data=d["/flux"][[dv]], metadata={}) for dv in d["/flux"].data_vars
+    }
     result[".bc"] = BoundaryConditionsData(data=d["/bc"], metadata={})
     if "basis" in d["/"]:
         result[".basis"] = d["/"].basis
@@ -454,7 +481,9 @@ def store_data_var(dv: str) -> bool:
     return dv not in ("fp", "mf_mod", "bc_mod") and "particle" not in dv
 
 
-def set_encoding(ds: xr.Dataset, compressor: Blosc | None = None, overwrite: bool = False) -> xr.Dataset:
+def set_encoding(
+    ds: xr.Dataset, compressor: Blosc | None = None, overwrite: bool = False
+) -> xr.Dataset:
     compressor = compressor or Blosc("zstd", 5, Blosc.SHUFFLE)
     for dv in ds.data_vars:
         if not ds[dv].encoding or overwrite:
@@ -524,7 +553,12 @@ def create_merged_data(params: dict, chunks: dict | None = None) -> xr.DataTree:
     return fp_all_to_datatree(fp_all, chunks=chunks)
 
 
-def create_and_save_merged_data(ini_file: str | Path, merged_data_dir: str | Path, output_name: str, chunks: dict | None = None) -> Path:
+def create_and_save_merged_data(
+    ini_file: str | Path,
+    merged_data_dir: str | Path,
+    output_name: str,
+    chunks: dict | None = None,
+) -> Path:
     params = read_ini(ini_file)
     dt = create_merged_data(params, chunks)
 
@@ -536,13 +570,15 @@ def create_and_save_merged_data(ini_file: str | Path, merged_data_dir: str | Pat
         merged_data_dir,
         species=params.get("species"),
         start_date=params.get("start_date"),
-        output_name=output_name
+        output_name=output_name,
     )
 
 
 def _parse_merged_data_name(name: str) -> dict[str, str]:
     """Extract species, start date, and output name from merged data file name."""
-    merged_data_name_pat = re.compile(r"(?P<species>[a-zA-Z0-9]+)_(?P<start_date>[\d-]+)_(?P<output_name>.+)_merged-data")
+    merged_data_name_pat = re.compile(
+        r"(?P<species>[a-zA-Z0-9]+)_(?P<start_date>[\d-]+)_(?P<output_name>.+)_merged-data"
+    )
     m = merged_data_name_pat.search(name)
     if m is None:
         raise ValueError(f"Merged data name {name} could not be parsed.")
@@ -561,10 +597,19 @@ def search_merged_data(merged_data_dir: str | Path) -> pd.DataFrame:
         else:
             info["path"] = path
             result.append(info)
-    return pd.DataFrame(result).sort_values(["species", "output_name", "start_date"]).reset_index(drop=True)
+    return (
+        pd.DataFrame(result)
+        .sort_values(["species", "output_name", "start_date"])
+        .reset_index(drop=True)
+    )
 
 
-def load_merged_data(merged_data_dir: str | Path, start_date: str, species: str | None = None, output_name: str | None = None) -> xr.DataTree:
+def load_merged_data(
+    merged_data_dir: str | Path,
+    start_date: str,
+    species: str | None = None,
+    output_name: str | None = None,
+) -> xr.DataTree:
     df = search_merged_data(merged_data_dir)
     filt = df.start_date.str.contains(start_date)
 
@@ -577,7 +622,9 @@ def load_merged_data(merged_data_dir: str | Path, start_date: str, species: str 
     df_filt = df.loc[filt]
 
     if df_filt.empty:
-        raise ValueError(f"Merged data with output_name={output_name}, start_date={start_date}, and species={species} not found in {merged_data_dir}.")
+        raise ValueError(
+            f"Merged data with output_name={output_name}, start_date={start_date}, and species={species} not found in {merged_data_dir}."
+        )
 
     row = df_filt.iloc[0]
     return xr.open_datatree(row.path, engine="zarr", chunks={})

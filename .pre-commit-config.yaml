@@ -1,0 +1,28 @@
+repos:
+  - repo: local
+    hooks:
+      - id: jupytext
+        name: jupytext (local)
+        entry: jupytext
+        language: system
+        args: ["--sync"]
+        # run on .ipynb and paired .py files
+        files: '\.(ipynb|py)$'
+
+      - id: nbstripout
+        name: nbstripout (local)
+        entry: nbstripout
+        language: system
+        # nbstripout understands .ipynb and json
+        files: '\.(ipynb|json)$'
+
+  - repo: https://github.com/psf/black
+    rev: 24.1.0
+    hooks:
+      - id: black
+        language_version: python3
+
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    rev: v0.1.0
+    hooks:
+      - id: ruff
