@@ -23,10 +23,9 @@ import argparse
 import ast
 import sys
 from pathlib import Path
-from typing import List, Tuple
 
 
-def parse_jupytext_py(content: str) -> Tuple[List[str], List[str], str]:
+def parse_jupytext_py(content: str) -> tuple[list[str], list[str], str]:
     """
     Parse a jupytext .py file and extract:
       - frontmatter lines (the metadata block at the top)
@@ -90,7 +89,7 @@ def parse_jupytext_py(content: str) -> Tuple[List[str], List[str], str]:
     return frontmatter_lines, imports, "".join(rest_without_imports)
 
 
-def deduplicate_imports(imports: List[str]) -> List[str]:
+def deduplicate_imports(imports: list[str]) -> list[str]:
     """Deduplicate imports while preserving order."""
     seen = set()
     result = []
@@ -102,7 +101,7 @@ def deduplicate_imports(imports: List[str]) -> List[str]:
     return result
 
 
-def create_imports_block(imports: List[str]) -> str:
+def create_imports_block(imports: list[str]) -> str:
     """Create an Imports cell block in jupytext format."""
     if not imports:
         return ""
@@ -168,7 +167,7 @@ def process_file(path: Path, dry_run: bool = False, backup: bool = False) -> boo
     return True
 
 
-def main(argv: List[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Collect and hoist imports in jupytext .py files",
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -39,7 +39,7 @@ def run(cmd: list[str], capture: bool = False, check: bool = True) -> subprocess
     return subprocess.run(cmd, check=check)
 
 
-def python_for_venv(venv: Optional[str]) -> str:
+def python_for_venv(venv: str | None) -> str:
     if venv:
         p = Path(venv).expanduser().resolve()
         candidate = p / "bin" / "python"
@@ -61,12 +61,6 @@ def ensure_ipykernel_installed(venv_python: str) -> None:
         run([venv_python, "-m", "pip", "install", "ipykernel", "jupyter_client"], check=True)
 
 
-def shutil_which(cmd: str) -> Optional[str]:
-    from shutil import which
-
-    return which(cmd)
-
-
 def kernelspec_exists(name: str) -> bool:
     try:
         from jupyter_client.kernelspec import KernelSpecManager
@@ -75,7 +69,7 @@ def kernelspec_exists(name: str) -> bool:
         specs = ksm.find_kernel_specs()
         return name in specs
     except Exception:
-        js = shutil_which("jupyter")
+        js = shutil.which("jupyter")
         if js:
             try:
                 cp = run([js, "kernelspec", "list", "--json"], capture=True, check=True)
@@ -88,11 +82,11 @@ def kernelspec_exists(name: str) -> bool:
 
 
 def install_kernel(
-    venv: Optional[str],
+    venv: str | None,
     name: str,
     display: str,
     patch_notebooks: bool = False,
-    notebooks_path: Optional[str] = None,
+    notebooks_path: str | None = None,
     force: bool = False,
 ) -> int:
     repo_root = find_repo_root()
