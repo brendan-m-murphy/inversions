@@ -99,14 +99,8 @@ def stack_fp_data(
             "mf_variability",
         ]
 
-    scenarios = [
-        fp_data[site][keep_vars].expand_dims({"site": [site]}) for site in sites
-    ]
-    combined_scenario = (
-        xr.concat(scenarios, dim="site")
-        .stack(nmeasure=("site", "time"))
-        .dropna("nmeasure")
-    )
+    scenarios = [fp_data[site][keep_vars].expand_dims({"site": [site]}) for site in sites]
+    combined_scenario = xr.concat(scenarios, dim="site").stack(nmeasure=("site", "time")).dropna("nmeasure")
     return combined_scenario
 
 
@@ -122,21 +116,13 @@ def make_site_indicator(site_coord: xr.DataArray) -> xr.DataArray:
     return xr_unique_inv(site_coord).rename("site_indicator")
 
 
-def make_freq_indicator(
-    time: xr.DataArray, freq: Literal["monthly"] | str
-) -> xr.DataArray:
+def make_freq_indicator(time: xr.DataArray, freq: Literal["monthly"] | str) -> xr.DataArray:
     if freq == "monthly":
-        return (
-            time.dt.month
-            - time.min().dt.month
-            + 12 * (time.dt.year - time.min().dt.year)
-        )
+        return time.dt.month - time.min().dt.month + 12 * (time.dt.year - time.min().dt.year)
     return xr_unique_inv(time.dt.floor(freq))
 
 
-def setup_sigma_freq(
-    time: xr.DataArray, freq: Literal["monthly"] | str | None = None
-) -> xr.DataArray:
+def setup_sigma_freq(time: xr.DataArray, freq: Literal["monthly"] | str | None = None) -> xr.DataArray:
     if freq is None:
         res = xr.zeros_like(time)
     else:
@@ -150,9 +136,7 @@ def setup_bc(H_bc, freq=None):
         return H_bc
     freq_arr = make_freq_indicator(H_bc.time, freq)
     dums = get_xr_dummies(freq_arr, return_sparse=False, cat_dim="bc_time")
-    return (H_bc.rename(bc_region="bc_curtain") * dums).stack(
-        bc_region=("bc_curtain", "bc_time")
-    )
+    return (H_bc.rename(bc_region="bc_curtain") * dums).stack(bc_region=("bc_curtain", "bc_time"))
 
 
 # Creating data for inversion
@@ -185,14 +169,10 @@ def make_inv_inputs(
     elif isinstance(min_error, dict):
         sites = np.unique(ds.site)
         err_per_site = np.array([min_error[site] for site in sites])
-        ds["min_error"] = xr.apply_ufunc(
-            lambda x: setup_min_error(err_per_site, x), ds.site_indicator
-        )
+        ds["min_error"] = xr.apply_ufunc(lambda x: setup_min_error(err_per_site, x), ds.site_indicator)
     elif min_error == "percentile":
         perc_err = percentile_error_method(fp_data)
-        ds["min_error"] = xr.apply_ufunc(
-            lambda x: setup_min_error(perc_err, x), ds.site_indicator
-        )
+        ds["min_error"] = xr.apply_ufunc(lambda x: setup_min_error(perc_err, x), ds.site_indicator)
     else:
         raise ValueError(f"Option '{min_error}' is not valid.")
 
@@ -295,9 +275,7 @@ def parse_prior(name: str, prior_params: PriorArgs, **kwargs) -> TensorVariable:
 
         if params.get("reparameterise", False):
             temp = pm.Normal(f"{name}0", 0, 1, **kwargs)
-            return pm.Deterministic(
-                name, pt.exp(params["mu"] + params["sigma"] * temp), **kwargs
-            )
+            return pm.Deterministic(name, pt.exp(params["mu"] + params["sigma"] * temp), **kwargs)
 
     try:
         dist = getattr(continuous, pdf_dict[pdf])
@@ -412,9 +390,7 @@ def make_sigma(
     sigma = parse_prior(name, prior_args, dims=tuple(coords.keys()))
 
     if compute_deterministic:
-        return pm.Deterministic(
-            f"{name}_obs_aligned", sigma[sites, freq_index], dims=output_dim
-        )
+        return pm.Deterministic(f"{name}_obs_aligned", sigma[sites, freq_index], dims=output_dim)
     return sigma[sites, freq_index]
 
 
@@ -431,9 +407,7 @@ def add_new_likelihood(
     error = add_model_data(combined_scenario.mf_error, "error")
 
     if const_min_error is not None:
-        min_error = add_model_data(
-            const_min_error * xr.ones_like(combined_scenario.min_error), "min_error"
-        )
+        min_error = add_model_data(const_min_error * xr.ones_like(combined_scenario.min_error), "min_error")
     else:
         min_error = add_model_data(combined_scenario.min_error, "min_error")
 
@@ -473,9 +447,7 @@ def add_old_likelihood(
     error = add_model_data(combined_scenario.mf_error, "error")
 
     if const_min_error is not None:
-        min_error = add_model_data(
-            const_min_error * xr.ones_like(combined_scenario.min_error), "min_error"
-        )
+        min_error = add_model_data(const_min_error * xr.ones_like(combined_scenario.min_error), "min_error")
     else:
         min_error = add_model_data(combined_scenario.min_error, "min_error")
 
@@ -496,9 +468,7 @@ def add_old_likelihood(
         combined_scenario.sigma_freq_index,
     )
     pe_scaled = sigma * pe
-    eps = pt.maximum(
-        pt.sqrt(error**2 + pt.pow(pe_scaled, power)), min_error_scaling * min_error
-    )
+    eps = pt.maximum(pt.sqrt(error**2 + pt.pow(pe_scaled, power)), min_error_scaling * min_error)
     epsilon = pm.Deterministic("epsilon", eps, dims="nmeasure")
     pm.Normal("y", mu=mu + mu_bc, sigma=epsilon, observed=Y, dims="nmeasure")
 
@@ -534,9 +504,7 @@ def make_model(
                 power=power,
             )
         else:
-            add_old_likelihood(
-                inv_input, sigma_prior=params["sigprior"], mu=mu, mu_bc=mu_bc
-            )
+            add_old_likelihood(inv_input, sigma_prior=params["sigprior"], mu=mu, mu_bc=mu_bc)
     return model
 
 
@@ -553,9 +521,7 @@ default_sample_kwargs = dict(
 )
 
 
-def sample(
-    model: pm.Model, draws: int = 1000, tune: int = 1000, **kwargs
-) -> az.InferenceData:
+def sample(model: pm.Model, draws: int = 1000, tune: int = 1000, **kwargs) -> az.InferenceData:
     if draws in kwargs:
         draws = kwargs.pop("draws")
     if tune in kwargs:
@@ -615,9 +581,7 @@ def make_inv_out(ds, idata, flux, params):
     return inv_out
 
 
-default_country_file = Path(
-    "/group/chem/acrg/LPDM/countries/country_EUROPE_EEZ_PARIS_gapfilled.nc"
-)
+default_country_file = Path("/group/chem/acrg/LPDM/countries/country_EUROPE_EEZ_PARIS_gapfilled.nc")
 default_countries = ["BEL", "NLD", "BENELUX", "DEU", "FRA", "GBR", "IRL", "NW_EU"]
 
 
@@ -642,9 +606,7 @@ def run_inversion(
 
     # make model, update params (e.g. reparam lognormal)
     for prior in ("xprior", "bcprior"):
-        if params[prior]["pdf"] == "lognormal" and params.get(
-            "reparameterise_log_normal"
-        ):
+        if params[prior]["pdf"] == "lognormal" and params.get("reparameterise_log_normal"):
             params[prior]["reparameterise"] = True
 
     model = make_model(inv_input, params, new_likelihood=new_likelihood, power=power)

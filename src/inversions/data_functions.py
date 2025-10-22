@@ -112,9 +112,7 @@ class MultiObs(ObsData):
                     **self.kwargs,
                 )
             except Exception as e:
-                print(
-                    f"Couldn't get obs for site {site} and inlet {inlet} from store {self.store}: {e}"
-                )
+                print(f"Couldn't get obs for site {site} and inlet {inlet} from store {self.store}: {e}")
             else:
                 self.obs[site] = obs
                 self.sites.append(site)
@@ -122,8 +120,7 @@ class MultiObs(ObsData):
 
                 if target_units is None:
                     target_units = {
-                        dv: obs.data.mf.attrs["units"]
-                        for dv in ("mf", "mf_repeatability", "mf_variability")
+                        dv: obs.data.mf.attrs["units"] for dv in ("mf", "mf_repeatability", "mf_variability")
                     }
 
                 if calibration_scale is None:
@@ -398,11 +395,7 @@ def fp_all_to_datatree(
     chunks: dict | None = None,
 ) -> xr.DataTree:
     scenario = {k: v for k, v in fp_all.items() if not k.startswith(".")}
-    attrs = {
-        k.removeprefix("."): v
-        for k, v in fp_all.items()
-        if k in [".species", ".scales", ".units"]
-    }
+    attrs = {k.removeprefix("."): v for k, v in fp_all.items() if k in [".species", ".scales", ".units"]}
     aux_data = {
         k.removeprefix("."): v
         for k, v in fp_all.items()
@@ -454,9 +447,7 @@ def fp_all_to_datatree(
 def datatree_to_fp_all(dt: xr.DataTree) -> dict:
     d = dt.to_dict()
     result = {}
-    result[".flux"] = {
-        dv: FluxData(data=d["/flux"][[dv]], metadata={}) for dv in d["/flux"].data_vars
-    }
+    result[".flux"] = {dv: FluxData(data=d["/flux"][[dv]], metadata={}) for dv in d["/flux"].data_vars}
     result[".bc"] = BoundaryConditionsData(data=d["/bc"], metadata={})
     if "basis" in d["/"]:
         result[".basis"] = d["/"].basis
@@ -481,9 +472,7 @@ def store_data_var(dv: str) -> bool:
     return dv not in ("fp", "mf_mod", "bc_mod") and "particle" not in dv
 
 
-def set_encoding(
-    ds: xr.Dataset, compressor: Blosc | None = None, overwrite: bool = False
-) -> xr.Dataset:
+def set_encoding(ds: xr.Dataset, compressor: Blosc | None = None, overwrite: bool = False) -> xr.Dataset:
     compressor = compressor or Blosc("zstd", 5, Blosc.SHUFFLE)
     for dv in ds.data_vars:
         if not ds[dv].encoding or overwrite:
@@ -597,11 +586,7 @@ def search_merged_data(merged_data_dir: str | Path) -> pd.DataFrame:
         else:
             info["path"] = path
             result.append(info)
-    return (
-        pd.DataFrame(result)
-        .sort_values(["species", "output_name", "start_date"])
-        .reset_index(drop=True)
-    )
+    return pd.DataFrame(result).sort_values(["species", "output_name", "start_date"]).reset_index(drop=True)
 
 
 def load_merged_data(
