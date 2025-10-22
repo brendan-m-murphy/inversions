@@ -638,7 +638,7 @@ for site, mod_obs in mod_obs_dict.items():
     ds["sf6_repeatability"] = std * xr.ones_like(ds["sf6"])
     ds["sf6_repeatability"].attrs["units"] = df["sf6"].attrs["units"]
     synth_obs[site] = ds.compute()
-    
+
 
 # %%
 multi_obs.obs["MHD"].data.mf.to_series().describe()
@@ -1105,7 +1105,7 @@ for site, ds in synth_obs1.items():
         except Exception as e:
             print("Error:", e)
             print("Attrs:\n", ds.attrs)
-                     
+
 
 # %% [markdown]
 # Check progress

@@ -55,7 +55,9 @@ from dask.distributed import Client, Cluster, Future
 
 
 def get_available_workers(client: Client, cluster: Cluster) -> list[str]:
-    worker_vals = client.scheduler_info(n_workers=len(cluster.workers))["workers"].values()
+    worker_vals = client.scheduler_info(n_workers=len(cluster.workers))[
+        "workers"
+    ].values()
     available_workers = [v.get("id") for v in worker_vals]
     return available_workers
 
@@ -65,7 +67,9 @@ def get_futures(client: Client) -> list[Future]:
     return [Future(key, client) for key in client.refcount]
 
 
-def zip_dir_no_compress(store_dir: str | Path, zip_path: str | Path, remove_source: bool = False) -> None:
+def zip_dir_no_compress(
+    store_dir: str | Path, zip_path: str | Path, remove_source: bool = False
+) -> None:
     store_dir = Path(store_dir)
     zip_path = Path(zip_path)
 
@@ -77,7 +81,9 @@ def zip_dir_no_compress(store_dir: str | Path, zip_path: str | Path, remove_sour
     os.close(fd)
 
     try:
-        with zipfile.ZipFile(tmp_name, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+        with zipfile.ZipFile(
+            tmp_name, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True
+        ) as zf:
             for p in sorted(store_dir.rglob("*")):
                 if p.is_file():
                     zf.write(p, arcname=p.relative_to(store_dir))
@@ -102,7 +108,9 @@ def zip_dir_no_compress(store_dir: str | Path, zip_path: str | Path, remove_sour
         raise
 
 
-def zip_on_done(future: Future, executor: concurrent.futures.ThreadPoolExecutor) -> None:
+def zip_on_done(
+    future: Future, executor: concurrent.futures.ThreadPoolExecutor
+) -> None:
     """Zip directory returned by future.
 
     Example usage:

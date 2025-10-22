@@ -70,6 +70,7 @@
 
 # %% editable=true slideshow={"slide_type": ""}
 from pathlib import Path
+
 sf6_path = Path("/group/chem/acrg/PARIS_inversions/sf6/")
 sf6_base_nid2025_path = sf6_path / "RHIME_NAME_EUROPE_FLAT_ConfigNID2025_sf6_yearly"
 # ini_files = !ls {sf6_base_nid2025_path / "*.ini"}
@@ -108,19 +109,27 @@ print(fp_all.keys())
 
 # %%
 scenario = {k: v for k, v in fp_all.items() if not k.startswith(".")}
-attrs = {k.removeprefix("."): v for k, v in fp_all.items() if k in [".species", ".scales", ".units"]}
-aux_data = {k.removeprefix("."): v for k, v in fp_all.items() if (k not in scenario) and (k.removeprefix(".") not in attrs)}
+attrs = {
+    k.removeprefix("."): v
+    for k, v in fp_all.items()
+    if k in [".species", ".scales", ".units"]
+}
+aux_data = {
+    k.removeprefix("."): v
+    for k, v in fp_all.items()
+    if (k not in scenario) and (k.removeprefix(".") not in attrs)
+}
 
-# nest flux (this can be done automatically from nested dict according to xarray docs, but 
+# nest flux (this can be done automatically from nested dict according to xarray docs, but
 # it doesn't work for me... maybe I need to update xarray
-#aux_data["/flux"] = xr.DataTree.from_dict({k: v.data for k, v in aux_data["flux"].items()})
-#del aux_data["flux"]
+# aux_data["/flux"] = xr.DataTree.from_dict({k: v.data for k, v in aux_data["flux"].items()})
+# del aux_data["flux"]
 
 # "flux" as a dataset... this might not work if we're mixing high/low frequency fluxes
 # but it works for multiple sectors
 aux_data["flux"] = xr.Dataset({k: v.data.flux for k, v in aux_data["flux"].items()})
 
-# get data from BoundaryConditionsData object... maybe we 
+# get data from BoundaryConditionsData object... maybe we
 # should put metadata in global attrs for this group?
 aux_data["bc"] = aux_data["bc"].data
 
@@ -154,22 +163,31 @@ dt.to_dict()
 #
 # Let's make a function to create a DataTree from the "fp_all" style dicts.
 
+
 # %%
 def fp_all_to_datatree(fp_all: dict, name: str | None = None) -> xr.DataTree:
     scenario = {k: v for k, v in fp_all.items() if not k.startswith(".")}
-    attrs = {k.removeprefix("."): v for k, v in fp_all.items() if k in [".species", ".scales", ".units"]}
-    aux_data = {k.removeprefix("."): v for k, v in fp_all.items() if (k not in scenario) and (k.removeprefix(".") not in attrs)}
+    attrs = {
+        k.removeprefix("."): v
+        for k, v in fp_all.items()
+        if k in [".species", ".scales", ".units"]
+    }
+    aux_data = {
+        k.removeprefix("."): v
+        for k, v in fp_all.items()
+        if (k not in scenario) and (k.removeprefix(".") not in attrs)
+    }
 
-    # nest flux (this can be done automatically from nested dict according to xarray docs, but 
+    # nest flux (this can be done automatically from nested dict according to xarray docs, but
     # it doesn't work for me... maybe I need to update xarray
-    #aux_data["/flux"] = xr.DataTree.from_dict({k: v.data for k, v in aux_data["flux"].items()})
-    #del aux_data["flux"]
+    # aux_data["/flux"] = xr.DataTree.from_dict({k: v.data for k, v in aux_data["flux"].items()})
+    # del aux_data["flux"]
 
     # "flux" as a dataset... this might not work if we're mixing high/low frequency fluxes
     # but it works for multiple sectors
     aux_data["flux"] = xr.Dataset({k: v.data.flux for k, v in aux_data["flux"].items()})
 
-    # get data from BoundaryConditionsData object... maybe we 
+    # get data from BoundaryConditionsData object... maybe we
     # should put metadata in global attrs for this group?
     aux_data["bc"] = aux_data["bc"].data
 
@@ -183,7 +201,7 @@ def fp_all_to_datatree(fp_all: dict, name: str | None = None) -> xr.DataTree:
 
     # add basis within group?
     # aux_data["basis"] = aux_data["basis"].rename("basis").to_dataset()
-    
+
     dt_dict = aux_data.copy()
     dt_dict["/scenario"] = xr.DataTree.from_dict({k: v for k, v in scenario.items()})
 
@@ -193,17 +211,20 @@ def fp_all_to_datatree(fp_all: dict, name: str | None = None) -> xr.DataTree:
 
     if name is not None:
         dt.name = name
-        
+
     return dt
 
 
 # %%
 from openghg.dataobjects import BoundaryConditionsData, FluxData
 
+
 def datatree_to_fp_all(dt: xr.DataTree) -> dict:
     d = dt.to_dict()
     result = {}
-    result[".flux"] = {dv: FluxData(data=d["/flux"][[dv]], metadata={}) for dv in d["/flux"].data_vars}
+    result[".flux"] = {
+        dv: FluxData(data=d["/flux"][[dv]], metadata={}) for dv in d["/flux"].data_vars
+    }
     result[".bc"] = BoundaryConditionsData(data=d["/bc"], metadata={})
     result[".basis"] = d["/"].basis
     result[".species"] = dt.attrs.get("species")
@@ -261,10 +282,10 @@ def rechunk_ds(ds: xr.Dataset) -> xr.Dataset:
 dt0 = dt0.map_over_datasets(rechunk_ds)
 
 # %%
-#dt0.to_zarr(path0)
+# dt0.to_zarr(path0)
 
 # %%
-#for dt, path in dt_and_paths[1:]:
+# for dt, path in dt_and_paths[1:]:
 #    dt.map_over_datasets(rechunk_ds).to_zarr(path)
 
 # %%
@@ -287,7 +308,7 @@ fp_all_2015
 # %% [markdown]
 # ## Preparing inversion inputs
 #
-# We'll use the `make_inv_inputs` function from `likelihood_tests.py`. This requires the "fp_all" (or "fp_data") dict, along with some parameters from the ini file. We'll get these first. 
+# We'll use the `make_inv_inputs` function from `likelihood_tests.py`. This requires the "fp_all" (or "fp_data") dict, along with some parameters from the ini file. We'll get these first.
 
 # %%
 from collections import namedtuple
@@ -303,7 +324,7 @@ for ini, dpath in zip(ini_files, data_paths):
     except IndexError:
         year = str(dt.flux.time.dt.year.values)
     fp_all = datatree_to_fp_all(dt)
-                                
+
     inversion_info[year] = InversionInfo(fp_all, params)
 
 # %%
@@ -314,10 +335,12 @@ InversionInput = namedtuple("InversionInput", "inv_input,params")
 
 inversion_inputs = {}
 for k, v in inversion_info.items():
-    inv_input = make_inv_inputs(v.fp_data, 
-                                bc_freq=v.params.get("bc_freq"), 
-                                sigma_freq=v.params.get("sigma_freq"),
-                                min_error=v.params.get("min_error") or v.params.get("calculate_min_error"))
+    inv_input = make_inv_inputs(
+        v.fp_data,
+        bc_freq=v.params.get("bc_freq"),
+        sigma_freq=v.params.get("sigma_freq"),
+        min_error=v.params.get("min_error") or v.params.get("calculate_min_error"),
+    )
     inversion_inputs[k] = InversionInput(inv_input, v.params)
 
 # %%
@@ -331,6 +354,7 @@ inversion_inputs["2015"].inv_input
 # %%
 # import pytensor before pymc so we can set config values
 import pytensor
+
 pytensor.config.floatX = "float32"
 pytensor.config.warn_float64 = "warn"
 
@@ -363,17 +387,23 @@ with pm.Model() as model:
     )
 
     make_offset(inv_input.site_indicator, {"pdf": "normal"})
-    
+
     # make likelihood
     Y = add_model_data(inv_input.mf, "Y")
     error = add_model_data(inv_input.mf_error.astype("float32"), "error")
     min_error = add_model_data(inv_input.min_error.astype("float32"), "min_error")
 
-    sigma = make_sigma(inv_input.site_indicator, {"pdf": "inversegamma", "alpha": 2.5, "beta": 5}, inv_input.sigma_freq_index)
+    sigma = make_sigma(
+        inv_input.site_indicator,
+        {"pdf": "inversegamma", "alpha": 2.5, "beta": 5},
+        inv_input.sigma_freq_index,
+    )
 
-    epsilon = pm.Deterministic("epsilon", pt.sqrt(error**2 + min_error**2 + 0.01 * sigma**2), dims="nmeasure")
+    epsilon = pm.Deterministic(
+        "epsilon", pt.sqrt(error**2 + min_error**2 + 0.01 * sigma**2), dims="nmeasure"
+    )
     pm.Normal("y", mu=mu + mu_bc, sigma=epsilon, observed=Y, dims="nmeasure")
-    
+
 
 # %%
 trace = pm.sample_prior_predictive(draws=10000, model=model)
@@ -382,10 +412,14 @@ trace = pm.sample_prior_predictive(draws=10000, model=model)
 trace
 
 # %%
-prior_preds = trace.prior_predictive.y.assign_coords(nmeasure=inv_input.nmeasure).squeeze("chain")
+prior_preds = trace.prior_predictive.y.assign_coords(
+    nmeasure=inv_input.nmeasure
+).squeeze("chain")
 
 # %%
-bc_prior = trace.prior.mu_bc.mean(["chain", "draw"]).assign_coords(nmeasure=inv_input.nmeasure)
+bc_prior = trace.prior.mu_bc.mean(["chain", "draw"]).assign_coords(
+    nmeasure=inv_input.nmeasure
+)
 
 # %%
 sites = list(np.unique(inv_input.site))
@@ -397,11 +431,13 @@ import matplotlib.pyplot as plt
 fig, axs = plt.subplots(4, 2, figsize=(15, 15))
 for site, ax in zip(sites, axs.flat):
     for i in range(10):
-        prior_preds.sel(site=site).isel(draw=slice(i, None, 10)).mean("draw").plot(ax=ax, label="prior pred", alpha=0.05, color="blue")
+        prior_preds.sel(site=site).isel(draw=slice(i, None, 10)).mean("draw").plot(
+            ax=ax, label="prior pred", alpha=0.05, color="blue"
+        )
     inv_input.mf.sel(site=site).plot(ax=ax, label="obs", alpha=0.5, color="orange")
     bc_prior.sel(site=site).plot(ax=ax, label="bc prior", alpha=0.5, color="green")
 
-#fig.legend()
+# fig.legend()
 
 # %% [markdown]
 # These prior predictives look reasonable. We're not modelling the big pollution events, and the baseline is too high in some cases.
@@ -431,15 +467,21 @@ with pm.Model() as model2:
     )
 
     make_offset(inv_input.site_indicator, {"pdf": "normal"})
-    
+
     # make likelihood
     Y = add_model_data(inv_input.mf, "Y")
     error = add_model_data(inv_input.mf_error.astype("float32"), "error")
     min_error = add_model_data(inv_input.min_error.astype("float32"), "min_error")
 
-    sigma = make_sigma(inv_input.site_indicator, {"pdf": "inversegamma", "alpha": 2.5, "beta": 5}, inv_input.sigma_freq_index)
+    sigma = make_sigma(
+        inv_input.site_indicator,
+        {"pdf": "inversegamma", "alpha": 2.5, "beta": 5},
+        inv_input.sigma_freq_index,
+    )
 
-    epsilon = pm.Deterministic("epsilon", pt.sqrt(error**2 + min_error**2 + 0.01 * sigma**2), dims="nmeasure")
+    epsilon = pm.Deterministic(
+        "epsilon", pt.sqrt(error**2 + min_error**2 + 0.01 * sigma**2), dims="nmeasure"
+    )
     pm.Normal("y", mu=mu + mu_bc, sigma=epsilon, observed=Y, dims="nmeasure")
 
 # %%
@@ -449,13 +491,19 @@ trace2 = pm.sample_prior_predictive(draws=1000, model=model2)
 # %%
 # TODO: use quantiles instead of plotting lots of traces...
 def plot_prior_preds(trace, inv_input, skip=20):
-    prior_preds = trace.prior_predictive.y.assign_coords(nmeasure=inv_input.nmeasure).squeeze("chain")
-    bc_prior = trace.prior.mu_bc.mean(["chain", "draw"]).assign_coords(nmeasure=inv_input.nmeasure)
-    
+    prior_preds = trace.prior_predictive.y.assign_coords(
+        nmeasure=inv_input.nmeasure
+    ).squeeze("chain")
+    bc_prior = trace.prior.mu_bc.mean(["chain", "draw"]).assign_coords(
+        nmeasure=inv_input.nmeasure
+    )
+
     fig, axs = plt.subplots(4, 2, figsize=(15, 15))
     for site, ax in zip(sites, axs.flat):
         for i in range(skip):
-            prior_preds.sel(site=site).isel(draw=slice(i, None, skip)).mean("draw").plot(ax=ax, label="prior pred", alpha=0.1 / np.sqrt(skip), color="blue")
+            prior_preds.sel(site=site).isel(draw=slice(i, None, skip)).mean(
+                "draw"
+            ).plot(ax=ax, label="prior pred", alpha=0.1 / np.sqrt(skip), color="blue")
         inv_input.mf.sel(site=site).plot(ax=ax, label="obs", alpha=0.5, color="orange")
         bc_prior.sel(site=site).plot(ax=ax, label="bc prior", alpha=0.5, color="green")
 
@@ -485,15 +533,17 @@ with pm.Model() as model3:
     )
 
     make_offset(inv_input.site_indicator, {"pdf": "normal"})
-    
+
     # make likelihood
     Y = add_model_data(inv_input.mf, "Y")
     error = add_model_data(inv_input.mf_error.astype("float32"), "error")
     min_error = add_model_data(inv_input.min_error.astype("float32"), "min_error")
 
-#    sigma = make_sigma(inv_input.site_indicator, {"pdf": "inversegamma", "alpha": 2.5, "beta": 5}, inv_input.sigma_freq_index)
+    #    sigma = make_sigma(inv_input.site_indicator, {"pdf": "inversegamma", "alpha": 2.5, "beta": 5}, inv_input.sigma_freq_index)
 
-    epsilon = pm.Deterministic("epsilon", pt.sqrt(error**2 + min_error**2), dims="nmeasure")
+    epsilon = pm.Deterministic(
+        "epsilon", pt.sqrt(error**2 + min_error**2), dims="nmeasure"
+    )
     pm.Normal("y", mu=mu + mu_bc, sigma=epsilon, observed=Y, dims="nmeasure")
 
 # %%
@@ -521,15 +571,17 @@ with pm.Model() as model4:
     )
 
     make_offset(inv_input.site_indicator, {"pdf": "normal"})
-    
+
     # make likelihood
     Y = add_model_data(inv_input.mf, "Y")
     error = add_model_data(inv_input.mf_error.astype("float32"), "error")
     min_error = add_model_data(inv_input.min_error.astype("float32"), "min_error")
 
-#    sigma = make_sigma(inv_input.site_indicator, {"pdf": "inversegamma", "alpha": 2.5, "beta": 5}, inv_input.sigma_freq_index)
+    #    sigma = make_sigma(inv_input.site_indicator, {"pdf": "inversegamma", "alpha": 2.5, "beta": 5}, inv_input.sigma_freq_index)
 
-    epsilon = pm.Deterministic("epsilon", pt.sqrt(error**2 + min_error**2), dims="nmeasure")
+    epsilon = pm.Deterministic(
+        "epsilon", pt.sqrt(error**2 + min_error**2), dims="nmeasure"
+    )
     pm.Normal("y", mu=mu + mu_bc, sigma=epsilon, observed=Y, dims="nmeasure")
 
     trace4 = pm.sample_prior_predictive(draws=5000)
@@ -556,15 +608,17 @@ with pm.Model() as model5:
     )
 
     make_offset(inv_input.site_indicator, {"pdf": "normal"})
-    
+
     # make likelihood
     Y = add_model_data(inv_input.mf, "Y")
     error = add_model_data(inv_input.mf_error.astype("float32"), "error")
     min_error = add_model_data(inv_input.min_error.astype("float32"), "min_error")
 
-#    sigma = make_sigma(inv_input.site_indicator, {"pdf": "inversegamma", "alpha": 2.5, "beta": 5}, inv_input.sigma_freq_index)
+    #    sigma = make_sigma(inv_input.site_indicator, {"pdf": "inversegamma", "alpha": 2.5, "beta": 5}, inv_input.sigma_freq_index)
 
-    epsilon = pm.Deterministic("epsilon", pt.sqrt(error**2 + min_error**2), dims="nmeasure")
+    epsilon = pm.Deterministic(
+        "epsilon", pt.sqrt(error**2 + min_error**2), dims="nmeasure"
+    )
     pm.Normal("y", mu=mu + mu_bc, sigma=epsilon, observed=Y, dims="nmeasure")
 
     trace5 = pm.sample_prior_predictive(draws=5000)
@@ -595,12 +649,11 @@ from dask_jobqueue import SLURMCluster
 from dask.distributed import Client
 
 
-
 cluster = SLURMCluster(
     processes=1,
     cores=8,
-    memory='50GB',
-    walltime='00:30:00',
+    memory="50GB",
+    walltime="00:30:00",
     account="chem007981",
     log_directory=str(log_path),
 )
@@ -622,7 +675,12 @@ cluster.scale(jobs=6)
 
 # %%
 def get_available_workers(client, cluster):
-    available_workers = [v.get("id") for v in client.scheduler_info(n_workers=len(cluster.workers))["workers"].values()]
+    available_workers = [
+        v.get("id")
+        for v in client.scheduler_info(n_workers=len(cluster.workers))[
+            "workers"
+        ].values()
+    ]
     return available_workers
 
 
@@ -656,15 +714,23 @@ def make_model(inv_input):
         )
 
         mu_bc += make_offset(inv_input.site_indicator, {"pdf": "normal"})
-    
+
         # make likelihood
         Y = add_model_data(inv_input.mf, "Y")
         error = add_model_data(inv_input.mf_error.astype("float32"), "error")
         min_error = add_model_data(inv_input.min_error.astype("float32"), "min_error")
 
-        sigma = make_sigma(inv_input.site_indicator, {"pdf": "inversegamma", "alpha": 2.5, "beta": 5}, inv_input.sigma_freq_index)
+        sigma = make_sigma(
+            inv_input.site_indicator,
+            {"pdf": "inversegamma", "alpha": 2.5, "beta": 5},
+            inv_input.sigma_freq_index,
+        )
 
-        epsilon = pm.Deterministic("epsilon", pt.sqrt(error**2 + min_error**2 + 0.01 * sigma**2), dims="nmeasure")
+        epsilon = pm.Deterministic(
+            "epsilon",
+            pt.sqrt(error**2 + min_error**2 + 0.01 * sigma**2),
+            dims="nmeasure",
+        )
         pm.Normal("y", mu=mu + mu_bc, sigma=epsilon, observed=Y, dims="nmeasure")
 
     return model
@@ -754,6 +820,7 @@ def run_inversion(inv_input, year, model_func=make_model, out_path=out_path, **k
 
 # %%
 from functools import partial
+
 futures = []
 
 for year in range(2015, 2020):
@@ -783,6 +850,7 @@ get_futures(client)
 
 # %% [markdown]
 # ## Hierarchical sigma
+
 
 # %%
 def make_hierarchical_model(inv_input, sigma_prior: dict, sigma_hyper_prior: dict):
@@ -818,17 +886,26 @@ def make_hierarchical_model(inv_input, sigma_prior: dict, sigma_hyper_prior: dic
         sigma0 = parse_prior("sigma0", sigma_prior, dims="nmeasure")
         sigma = pm.Deterministic("sigma", sigma_hyper * sigma0)
 
-        epsilon = pm.Deterministic("epsilon", pt.sqrt(error**2 + sigma**2 + min_error**2), dims="nmeasure")
+        epsilon = pm.Deterministic(
+            "epsilon", pt.sqrt(error**2 + sigma**2 + min_error**2), dims="nmeasure"
+        )
         pm.Normal("y", mu=mu + mu_bc, sigma=epsilon, observed=Y, dims="nmeasure")
 
     return model
 
 
 # %%
-sig_priors = dict(sigma_hyper_prior={"pdf": "inversegamma", "alpha": 3, "beta": 2}, sigma_prior={"pdf": "halfstudentt", "nu": 2.0})
+sig_priors = dict(
+    sigma_hyper_prior={"pdf": "inversegamma", "alpha": 3, "beta": 2},
+    sigma_prior={"pdf": "halfstudentt", "nu": 2.0},
+)
 
 # %%
-hmodel = make_hierarchical_model(inv_input, sigma_hyper_prior={"pdf": "inversegamma", "alpha": 3, "beta": 2}, sigma_prior={"pdf": "halfnormal"})
+hmodel = make_hierarchical_model(
+    inv_input,
+    sigma_hyper_prior={"pdf": "inversegamma", "alpha": 3, "beta": 2},
+    sigma_prior={"pdf": "halfnormal"},
+)
 
 with hmodel:
     htrace = pm.sample_prior_predictive(draws=1000)
@@ -844,7 +921,14 @@ hout_path.mkdir(parents=True, exist_ok=True)
 for year in range(2015, 2020):
     inv_input = inversion_inputs[str(year)].inv_input
     key = f"run_inversion-hierarchical_{year}"
-    func = partial(run_inversion, inv_input=inv_input, year=year, model_func=make_hierarchical_model, out_path=hout_path, **sig_priors)
+    func = partial(
+        run_inversion,
+        inv_input=inv_input,
+        year=year,
+        model_func=make_hierarchical_model,
+        out_path=hout_path,
+        **sig_priors,
+    )
     future = client.submit(func, key=key)
     futures.append(future)
 
@@ -862,13 +946,14 @@ inv_input
 
 # %%
 # #!ls -R {out_path.parent.parent/"brendan_tests"/"simple_models"}
-#out_path = out_path.parent.parent/"brendan_tests"
+# out_path = out_path.parent.parent/"brendan_tests"
 
 # %%
 
 # %%
 from collections import defaultdict
 import os
+
 trace_files = defaultdict(list)
 
 
@@ -901,9 +986,9 @@ trace0 = traces["hierarchical_model"][0]
 trace0.posterior
 
 # %%
-#del trace0["prior"]
-#del trace0["prior_predictive"]
-#del trace0["posterior_predictive"]
+# del trace0["prior"]
+# del trace0["prior_predictive"]
+# del trace0["posterior_predictive"]
 with hmodel:
     trace0.extend(pm.sample_prior_predictive(draws=1000))
     trace0.extend(pm.sample_posterior_predictive(trace=trace0))
@@ -922,18 +1007,25 @@ inv_out = make_inv_out(inv_input0, trace0, flux, params)
 # %%
 from openghg_inversions.postprocessing.countries import Countries
 
-default_country_file = Path("/group/chem/acrg/LPDM/countries/country_EUROPE_EEZ_PARIS_gapfilled.nc")
+default_country_file = Path(
+    "/group/chem/acrg/LPDM/countries/country_EUROPE_EEZ_PARIS_gapfilled.nc"
+)
 default_countries = ["BEL", "NLD", "BENELUX", "DEU", "FRA", "GBR", "IRL", "NW_EU"]
 
 
-countries = Countries.from_file(country_file=default_country_file, country_code="alpha3")
+countries = Countries.from_file(
+    country_file=default_country_file, country_code="alpha3"
+)
 
 # %%
 inv_out.trace = inv_out.trace.isel(chain=0)
 
 # %%
-from openghg_inversions.postprocessing.make_paris_outputs import paris_concentration_outputs
-#conc, flux = make_paris_outputs(inv_out, default_country_file, time_point="start", inversion_grid=False)
+from openghg_inversions.postprocessing.make_paris_outputs import (
+    paris_concentration_outputs,
+)
+
+# conc, flux = make_paris_outputs(inv_out, default_country_file, time_point="start", inversion_grid=False)
 conc = paris_concentration_outputs(inv_out)
 
 # %%
@@ -949,12 +1041,19 @@ for site, ax in zip(range(6), axs.flat):
     co_sel = conc.isel(nsite=site)
     co_sel.Yobs.plot(ax=ax, label="y obs")
     co_sel.Yapost.plot(ax=ax, label="a post")
-    ax.fill_between(co_sel.time.values, co_sel.qYapost.isel(percentile=0).values, co_sel.qYapost.isel(percentile=1).values, alpha=0.5, color="orange", interpolate=True)
+    ax.fill_between(
+        co_sel.time.values,
+        co_sel.qYapost.isel(percentile=0).values,
+        co_sel.qYapost.isel(percentile=1).values,
+        alpha=0.5,
+        color="orange",
+        interpolate=True,
+    )
     ax.legend()
     ax.set_title(conc.sitenames.values[site])
 
 # %%
-#country_df = countries.get_country_trace(inv_out).mean("draw").to_series().unstack()
+# country_df = countries.get_country_trace(inv_out).mean("draw").to_series().unstack()
 
 # %%
 # %run inversions_experimental_code/basis_functions.py
@@ -968,10 +1067,10 @@ flux_post_mean = bf.interpolate(inv_out.trace.posterior.x.mean(["draw"]), flux=T
 # %%
 import geopandas as gpd
 
-world = gpd.read_file("natural_earth_50.zip")  
+world = gpd.read_file("natural_earth_50.zip")
 
 # %%
-fig, ax = plt.subplots(figsize=(15,7))
+fig, ax = plt.subplots(figsize=(15, 7))
 
 lat_slice = slice(37, None)
 lon_slice = slice(-14, 25)
@@ -979,12 +1078,14 @@ lon_slice = slice(-14, 25)
 lat_min, lat_max = lat_slice.start, lat_slice.stop
 lon_min, lon_max = lon_slice.start, lon_slice.stop
 
-#vmin, vmax = -39, -26
+# vmin, vmax = -39, -26
 vmin, vmax = 0, 10e-13
 
-flux_post_mean.sel(lat=lat_slice, lon=lon_slice).plot(ax=ax) #, vmin=vmin, vmax=vmax)
+flux_post_mean.sel(lat=lat_slice, lon=lon_slice).plot(ax=ax)  # , vmin=vmin, vmax=vmax)
 
-world.boundary.plot(ax=ax, linewidth=0.6, edgecolor='white')  # or .plot(facecolor='none')
+world.boundary.plot(
+    ax=ax, linewidth=0.6, edgecolor="white"
+)  # or .plot(facecolor='none')
 ax.set_xlim(lon_min, lon_max)
 ax.set_ylim(lat_min, lat_max)
 

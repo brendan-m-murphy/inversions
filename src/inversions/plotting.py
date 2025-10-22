@@ -32,12 +32,17 @@ def open_mf_paris_flux(flux_path: str | Path, glob: str = "*flux*.nc") -> xr.Dat
     return xr.open_mfdataset(str(flux_path / glob))
 
 
-def open_mf_paris_conc(conc_path: str | Path | list[str | Path], glob: str = "*conc*.nc") -> xr.Dataset:
+def open_mf_paris_conc(
+    conc_path: str | Path | list[str | Path], glob: str = "*conc*.nc"
+) -> xr.Dataset:
     """Open multiple concentration output files."""
     paths = _handle_multi_path_and_glob_netcdf(conc_path, glob)
     # open netCDFs and convert nsite dim + sitenames coord to a dimension coordinate
     # so we can concatenate
-    datasets = [xr.open_dataset(p).rename(sitenames="site").swap_dims(nsite="site") for p in paths]
+    datasets = [
+        xr.open_dataset(p).rename(sitenames="site").swap_dims(nsite="site")
+        for p in paths
+    ]
     ds = xr.concat(datasets, dim="time", join="outer")
 
     # convert back to template format before returning

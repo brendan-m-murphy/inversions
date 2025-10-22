@@ -80,7 +80,9 @@ def split_by_mask(da, mask):
 
 class BasisFunctions:
     def __init__(self, basis_flat, flux, chunks: dict | None = None):
-        self.basis_flat = basis_flat.isel(time=0) if "time" in basis_flat.dims else basis_flat
+        self.basis_flat = (
+            basis_flat.isel(time=0) if "time" in basis_flat.dims else basis_flat
+        )
         self.flux = flux
         self.basis_matrix = get_xr_dummies(basis_flat, cat_dim="region")
 
@@ -95,21 +97,29 @@ class BasisFunctions:
 
         self.interpolation_matrix = self.basis_matrix * self.flux
 
-        self.projection_weightings = xr.dot(self.basis_matrix, self.flux**2, dim=["lat", "lon"])
+        self.projection_weightings = xr.dot(
+            self.basis_matrix, self.flux**2, dim=["lat", "lon"]
+        )
 
         if "time" in self.projection_weightings.dims:
-            self.projection_weightings = self.projection_weightings.squeeze("time", drop=True)
+            self.projection_weightings = self.projection_weightings.squeeze(
+                "time", drop=True
+            )
 
         # make factors to rescale prior uncertainty
         # normalise by mean of flux to avoid floating point issues
         flux_scaling = 1 / self.flux.mean()
         self.uncertainty_rescaling = (
-            xr.dot((flux_scaling * self.flux) ** 4, self.basis_matrix, dim=["lat", "lon"])
+            xr.dot(
+                (flux_scaling * self.flux) ** 4, self.basis_matrix, dim=["lat", "lon"]
+            )
             / (flux_scaling**2 * self.projection_weightings) ** 2
         )
 
         if "time" in self.uncertainty_rescaling.dims:
-            self.uncertainty_rescaling = self.uncertainty_rescaling.squeeze("time", drop=True)
+            self.uncertainty_rescaling = self.uncertainty_rescaling.squeeze(
+                "time", drop=True
+            )
 
         # make aggregation error factor; the aggregation error is then
         # prior_sigma * np.sqrt((fp_x_flux)**2 @ agg_err_factor)
@@ -129,9 +139,14 @@ class BasisFunctions:
 
     def project(self, data, flux: bool = False, normalise: bool = False):
         if flux:
-            return xr.dot(data, self.interpolation_matrix, dim=["lat", "lon"]) / self.projection_weightings
+            return (
+                xr.dot(data, self.interpolation_matrix, dim=["lat", "lon"])
+                / self.projection_weightings
+            )
         if normalise:
-            return xr.dot(data, self.basis_matrix, dim=["lat", "lon"]) / self.basis_matrix.sum(["lat", "lon"])
+            return xr.dot(
+                data, self.basis_matrix, dim=["lat", "lon"]
+            ) / self.basis_matrix.sum(["lat", "lon"])
         return xr.dot(data, self.basis_matrix, dim=["lat", "lon"])
 
     def sensitivities(self, fp):
@@ -149,7 +164,9 @@ class BasisFunctions:
             self.basis_flat.plot(**kwargs)
         else:
             bf_shuf = self.basis_flat.copy()
-            bf_shuf.values = self.labels_shuffled[self.basis_flat.values.astype(int) - 1]
+            bf_shuf.values = self.labels_shuffled[
+                self.basis_flat.values.astype(int) - 1
+            ]
             bf_shuf.plot(**kwargs)
 
 

@@ -133,6 +133,7 @@
 
 # %%
 from pathlib import Path
+
 sf6_path = Path("/group/chem/acrg/PARIS_inversions/sf6/")
 # !ls -lst {sf6_path}
 
@@ -142,7 +143,12 @@ for i, md in enumerate(model_dirs):
     print(i, md)
 
 # %%
-model_dict = {"base": model_dirs[9], "bias": model_dirs[14], "pefalse": model_dirs[8], "biaspefalse": model_dirs[11]}
+model_dict = {
+    "base": model_dirs[9],
+    "bias": model_dirs[14],
+    "pefalse": model_dirs[8],
+    "biaspefalse": model_dirs[11],
+}
 
 # %% [markdown]
 # We need to read in data, but the fluxy `read_model_output` function assumes a different directory structure, so we'll just try to replicate its output.
@@ -154,7 +160,9 @@ import pandas as pd
 import xarray as xr
 
 # %%
-ds_all = {k: xr.open_mfdataset(str(sf6_path / v / "*flux*.nc")) for k, v in model_dict.items()}
+ds_all = {
+    k: xr.open_mfdataset(str(sf6_path / v / "*flux*.nc")) for k, v in model_dict.items()
+}
 
 # %%
 import logging
@@ -183,7 +191,7 @@ get_labels_from_file = False
 models = list(ds_all.keys())
 
 # This is the substance available in the test data.
-species = "sf6" 
+species = "sf6"
 
 # Read the default configuration files
 config_data = read_config_files()
@@ -193,13 +201,28 @@ model_colors = set_model_colors(models)
 model_labels = set_model_labels(models, config_data, get_labels_from_file)
 
 # %%
-model_labels = {"base": "PEFO True", "bias": "PEFO True + Bias", "pefalse": "PEFO False", "biaspefalse": "PEFO False + Bias"}
+model_labels = {
+    "base": "PEFO True",
+    "bias": "PEFO True + Bias",
+    "pefalse": "PEFO False",
+    "biaspefalse": "PEFO False + Bias",
+}
 
 # %%
 from fluxy.io import edit_vars_and_attributes
 
-ds_all = {k : edit_vars_and_attributes(v, k, "yearly", "flux", config_data.get("regions_info", {}), config_data.get("site_info", {}), species=species)
-          for k, v in ds_all.items()}
+ds_all = {
+    k: edit_vars_and_attributes(
+        v,
+        k,
+        "yearly",
+        "flux",
+        config_data.get("regions_info", {}),
+        config_data.get("site_info", {}),
+        species=species,
+    )
+    for k, v in ds_all.items()
+}
 
 # %%
 # from fluxy "example basics" ipynb
@@ -223,8 +246,7 @@ end_date = "2020-01-01"
 ###################################
 
 
-
-ds_all_flux = ds_all #read_model_output(...
+ds_all_flux = ds_all  # read_model_output(...
 
 
 # Select only the time period and regions of interest
@@ -275,7 +297,7 @@ fig = plot_country_flux(
     ds_all_flux_scaled,
     species,
     plot_regions=regions,
-#    config_data=config_data,  # turn off, else it looks for BEL-LUX-NEL, etc instead of BENELUX
+    #    config_data=config_data,  # turn off, else it looks for BEL-LUX-NEL, etc instead of BENELUX
     model_colors=model_colors,
     model_labels=model_labels,
     start_date=start_date,
@@ -315,14 +337,39 @@ fig = plot_country_flux(
 # So... let's plot these, along with modelled baselines.
 
 # %%
-ds_conc_all = {k: xr.concat([xr.open_dataset(sf6_path / v / f"SF6_EUROPE_PARIS_conc_20{yr}-01-01.nc").rename(sitenames="site").swap_dims(nsite="site") for yr in ["15", "16", "17", "18", "19"]], dim="time", join="outer") for k, v in model_dict.items()}
+ds_conc_all = {
+    k: xr.concat(
+        [
+            xr.open_dataset(sf6_path / v / f"SF6_EUROPE_PARIS_conc_20{yr}-01-01.nc")
+            .rename(sitenames="site")
+            .swap_dims(nsite="site")
+            for yr in ["15", "16", "17", "18", "19"]
+        ],
+        dim="time",
+        join="outer",
+    )
+    for k, v in model_dict.items()
+}
 
 # %%
-ds_conc_all = {k: v.swap_dims(site="nsite").rename(site="sitenames") for k, v in ds_conc_all.items()}
+ds_conc_all = {
+    k: v.swap_dims(site="nsite").rename(site="sitenames")
+    for k, v in ds_conc_all.items()
+}
 
 # %%
-ds_conc_all = {k : edit_vars_and_attributes(v, k, "yearly", "concentration", config_data.get("regions_info", {}), config_data.get("site_info", {}), species=species)
-          for k, v in ds_conc_all.items()}
+ds_conc_all = {
+    k: edit_vars_and_attributes(
+        v,
+        k,
+        "yearly",
+        "concentration",
+        config_data.get("regions_info", {}),
+        config_data.get("site_info", {}),
+        species=species,
+    )
+    for k, v in ds_conc_all.items()
+}
 
 # %%
 ds_conc_all["base"].platform.values
@@ -358,7 +405,10 @@ ds_all_mf_sliced = slice_mf(
 # %%
 # trying to restore stacked index coord...
 ds = next(iter(ds_all_mf_sliced.values()))
-mindex = pd.MultiIndex.from_arrays([ds.platform.values[ds.number_of_identifier.values], ds.time.values], names=["platform", "time"])
+mindex = pd.MultiIndex.from_arrays(
+    [ds.platform.values[ds.number_of_identifier.values], ds.time.values],
+    names=["platform", "time"],
+)
 ds = ds.assign_coords(xr.Coordinates.from_pandas_multiindex(mindex, "index"))
 ds
 
@@ -374,11 +424,12 @@ from fluxy.plots.mf_timeseries import plot_timeseries
 ###################################
 ### edit variables in this block
 # Variables and respective uncertainties to plot
-include = {"mf_observed": None, 
-           "mf_posterior": "percentile_mf_posterior",
-           "mf_prior": "percentile_mf_prior",
-#           "mf_bc_posterior": None,
-          }
+include = {
+    "mf_observed": None,
+    "mf_posterior": "percentile_mf_posterior",
+    "mf_prior": "percentile_mf_prior",
+    #           "mf_bc_posterior": None,
+}
 
 # To plot the histogram of the variables in "include", set "diff_include" to None
 # To plot the histogram of Obs-variable, set "diff_include" to the desired variable to be subtracted
@@ -429,7 +480,7 @@ fig = plot_timeseries(
 )
 
 # %% [markdown]
-# It looks like the fit to the obs doesn't really change, but the uncertainty decreases massively, except at pollution event times. 
+# It looks like the fit to the obs doesn't really change, but the uncertainty decreases massively, except at pollution event times.
 #
 # - Why is uncertainty high initially?
 # - Why does it decrease? (In Gaussian model, the posterior predictive uncertainty is the uncertainty of the likelihood combined with the uncertainty of the posterior... so I guess we're seeing just the uncertainty from the likelihood?)
@@ -444,21 +495,50 @@ model_dirs
 
 # %%
 def get_conc_all(model_dict: dict) -> dict[str, xr.Dataset]:
-    ds_conc_all = {k: xr.concat([xr.open_dataset(sf6_path / v / f"SF6_EUROPE_PARIS_conc_20{yr}-01-01.nc").rename(sitenames="site").swap_dims(nsite="site") for yr in ["15", "16", "17", "18", "19"]], dim="time", join="outer") for k, v in model_dict.items()}
-    ds_conc_all = {k: v.swap_dims(site="nsite").rename(site="sitenames") for k, v in ds_conc_all.items()}
-    ds_conc_all = {k : edit_vars_and_attributes(v, k, "yearly", "concentration", config_data.get("regions_info", {}), config_data.get("site_info", {}), species=species)
-          for k, v in ds_conc_all.items()}
+    ds_conc_all = {
+        k: xr.concat(
+            [
+                xr.open_dataset(sf6_path / v / f"SF6_EUROPE_PARIS_conc_20{yr}-01-01.nc")
+                .rename(sitenames="site")
+                .swap_dims(nsite="site")
+                for yr in ["15", "16", "17", "18", "19"]
+            ],
+            dim="time",
+            join="outer",
+        )
+        for k, v in model_dict.items()
+    }
+    ds_conc_all = {
+        k: v.swap_dims(site="nsite").rename(site="sitenames")
+        for k, v in ds_conc_all.items()
+    }
+    ds_conc_all = {
+        k: edit_vars_and_attributes(
+            v,
+            k,
+            "yearly",
+            "concentration",
+            config_data.get("regions_info", {}),
+            config_data.get("site_info", {}),
+            species=species,
+        )
+        for k, v in ds_conc_all.items()
+    }
     return ds_conc_all
 
 
 # %%
-model_dict_std_2 = {"pefo_true_std_2": 'RHIME_NAME_EUROPE_FLAT_PARISNID2026_wi_bias_prior_std_2_sf6_yearly',
-                    "pefo_false_std_2": 'RHIME_NAME_EUROPE_FLAT_PARISNID2026_wi_bias_prior_std_2_poll_events_from_obs_FALSE_sf6_yearly',
-                   }
+model_dict_std_2 = {
+    "pefo_true_std_2": "RHIME_NAME_EUROPE_FLAT_PARISNID2026_wi_bias_prior_std_2_sf6_yearly",
+    "pefo_false_std_2": "RHIME_NAME_EUROPE_FLAT_PARISNID2026_wi_bias_prior_std_2_poll_events_from_obs_FALSE_sf6_yearly",
+}
 
 models_std_2 = list(model_dict_std_2.keys())
 model_colors_std_2 = set_model_colors(models_std_2)
-model_labels_std_2 = {"pefo_true_std_2": "PEFO True, stdev 2", "pefo_false_std_2": "PEFO False, stdev 2"}
+model_labels_std_2 = {
+    "pefo_true_std_2": "PEFO True, stdev 2",
+    "pefo_false_std_2": "PEFO False, stdev 2",
+}
 
 # %%
 ds_all_mf_std_2 = get_conc_all(model_dict_std_2)
@@ -553,7 +633,7 @@ info_df = pd.read_csv(io.StringIO(sf6_info), sep=",")
 info_df
 
 # %%
-sf6_info_2015="""
+sf6_info_2015 = """
 category,company_name,location,latitude,longitude,description
 "SF6 production and major recycling","Solvay","Bad Wimpfen, Germany",49.23,9.17,"Major site for SF6 manufacturing and recycling."
 "Electrical equipment manufacturing (using SF6)","ABB","Zürich, Switzerland",47.37,8.54,"Global headquarters; continued use of SF6 in electrical equipment manufacturing."

@@ -66,7 +66,9 @@ def scan_notebook(path: Path):
                         "notebook": str(path),
                         "cell_index": cell_index,
                         "name": getattr(node, "name", "<anon>"),
-                        "type": "class" if isinstance(node, ast.ClassDef) else "function",
+                        "type": (
+                            "class" if isinstance(node, ast.ClassDef) else "function"
+                        ),
                         "source": norm,
                         "hash": hash_source(norm),
                     }
@@ -99,14 +101,18 @@ def main():
         outdir.mkdir(parents=True, exist_ok=True)
 
     report_lines = []
-    report_lines.append(f"Scanned {len(notebooks)} notebooks, found {len(all_defs)} defs\n")
+    report_lines.append(
+        f"Scanned {len(notebooks)} notebooks, found {len(all_defs)} defs\n"
+    )
     candidates = []
     for h, defs in grouped.items():
         count = len(defs)
         name = defs[0]["name"]
         t = defs[0]["type"]
         sample_nb = defs[0]["notebook"]
-        report_lines.append(f"- {t} {name!s} — occurrences: {count} — sample: {sample_nb}")
+        report_lines.append(
+            f"- {t} {name!s} — occurrences: {count} — sample: {sample_nb}"
+        )
         if count >= args.min_occurrences:
             candidates.append((h, defs))
             if args.write_examples:

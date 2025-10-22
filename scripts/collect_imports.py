@@ -77,7 +77,9 @@ def parse_jupytext_py(content: str) -> tuple[list[str], list[str], str]:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             # Mark these line numbers for removal
             if hasattr(node, "lineno") and hasattr(node, "end_lineno"):
-                for line_num in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                for line_num in range(
+                    node.lineno, (node.end_lineno or node.lineno) + 1
+                ):
                     import_lines_set.add(line_num)
 
     # Reconstruct rest content without import lines
@@ -172,9 +174,15 @@ def main(argv: list[str] | None = None) -> int:
         description="Collect and hoist imports in jupytext .py files",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("files", nargs="+", type=Path, help="Jupytext .py files to process")
-    parser.add_argument("--dry-run", action="store_true", help="Show changes without writing")
-    parser.add_argument("--backup", action="store_true", help="Create .bak backup before modifying")
+    parser.add_argument(
+        "files", nargs="+", type=Path, help="Jupytext .py files to process"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show changes without writing"
+    )
+    parser.add_argument(
+        "--backup", action="store_true", help="Create .bak backup before modifying"
+    )
 
     args = parser.parse_args(argv)
 

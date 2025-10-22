@@ -62,20 +62,25 @@ instruments = sorted(res.results.instrument.unique())
 instr_to_dims = {}
 for instr in instruments:
     noise, bias = instr.split("_")[-2:]
-    noise_val = 0.0 if noise.startswith("no") else float(noise.removesuffix("-noise")) / 10
+    noise_val = (
+        0.0 if noise.startswith("no") else float(noise.removesuffix("-noise")) / 10
+    )
     bias_val = 0.0 if bias.startswith("no") else float(bias.removesuffix("-bias")) / 100
     instr_to_dims[instr] = {"noise": [noise_val], "bias": [bias_val]}
 
 # %%
 all_obs = []
-other_args = {"start_date": "2015-01-01",
-              "end_date": "2025-01-01", 
-              "inlets": [None] * len(sites), 
-              "obs_data_levels": [None] * len(sites),
-              "averaging_periods": ["4h"] * len(sites),
-             }
+other_args = {
+    "start_date": "2015-01-01",
+    "end_date": "2025-01-01",
+    "inlets": [None] * len(sites),
+    "obs_data_levels": [None] * len(sites),
+    "averaging_periods": ["4h"] * len(sites),
+}
 for instr in instruments:
-    multi_obs = MultiObs(species="sf6", sites=sites, instruments=[instr] * len(sites), **other_args)
+    multi_obs = MultiObs(
+        species="sf6", sites=sites, instruments=[instr] * len(sites), **other_args
+    )
     all_obs.append(multi_obs.data.expand_dims(instr_to_dims[instr]))
 
 # %%
@@ -100,7 +105,10 @@ md_res = search_merged_data(data_path)
 md_res
 
 # %%
-all_merged_data = [load_merged_data(merged_data_dir=data_path, species="sf6", start_date=start_date) for start_date in md_res.start_date]
+all_merged_data = [
+    load_merged_data(merged_data_dir=data_path, species="sf6", start_date=start_date)
+    for start_date in md_res.start_date
+]
 
 # %%
 all_merged_data[0]
@@ -115,16 +123,25 @@ from openghg_inversions.basis.algorithms import weighted_algorithm
 # weighted_algorithm?
 
 # %%
-intem_regions = xr.open_dataset("/user/work/bm13805/openghg_inversions/openghg_inversions/basis/outer_region_definition_EUROPE.nc").region
-_, intem_regions = xr.align(all_merged_data[0].flux.to_dataset(), intem_regions, join="override")
+intem_regions = xr.open_dataset(
+    "/user/work/bm13805/openghg_inversions/openghg_inversions/basis/outer_region_definition_EUROPE.nc"
+).region
+_, intem_regions = xr.align(
+    all_merged_data[0].flux.to_dataset(), intem_regions, join="override"
+)
 
 
 # %%
 def mean_fp_x_flux(dt: xr.DataTree, mask: xr.DataArray | None = None) -> xr.DataArray:
     if mask is not None:
-        ds_list = [v.fp_x_flux.where(mask, drop=True).expand_dims({"site": [k]}) for k, v in dt.scenario.items()]
+        ds_list = [
+            v.fp_x_flux.where(mask, drop=True).expand_dims({"site": [k]})
+            for k, v in dt.scenario.items()
+        ]
     else:
-        ds_list = [v.fp_x_flux.expand_dims({"site": [k]}) for k, v in dt.scenario.items()]
+        ds_list = [
+            v.fp_x_flux.expand_dims({"site": [k]}) for k, v in dt.scenario.items()
+        ]
     return xr.concat(ds_list, dim="site").mean(["site", "time"])
 
 
@@ -138,9 +155,15 @@ np.log(all_merged_data[0].flux["flat-annual-total"]).plot()
 from functools import partial
 
 
-def weighted_fixed_outer_regions_basis(merged_data: xr.DataTree, nbasis: int = 250, domain: str = "EUROPE") -> xr.DataArray:
-    intem_regions = xr.open_dataset("/user/work/bm13805/openghg_inversions/openghg_inversions/basis/outer_region_definition_EUROPE.nc").region
-    _, intem_regions = xr.align(merged_data.flux.to_dataset(), intem_regions, join="override")
+def weighted_fixed_outer_regions_basis(
+    merged_data: xr.DataTree, nbasis: int = 250, domain: str = "EUROPE"
+) -> xr.DataArray:
+    intem_regions = xr.open_dataset(
+        "/user/work/bm13805/openghg_inversions/openghg_inversions/basis/outer_region_definition_EUROPE.nc"
+    ).region
+    _, intem_regions = xr.align(
+        merged_data.flux.to_dataset(), intem_regions, join="override"
+    )
 
     inner_index = intem_regions.max().values
     mask = intem_regions == inner_index
@@ -150,13 +173,13 @@ def weighted_fixed_outer_regions_basis(merged_data: xr.DataTree, nbasis: int = 2
     func = partial(weighted_algorithm, nregion=nbasis, bucket=1, domain=domain)
     inner_region = xr.apply_ufunc(func, grid.as_numpy()).rename("basis")
 
-    basis = intem_regions.rename("basis") 
+    basis = intem_regions.rename("basis")
 
     loc_dict = {
         "lat": slice(inner_region.lat.min(), inner_region.lat.max() + 0.1),
         "lon": slice(inner_region.lon.min(), inner_region.lon.max() + 0.1),
     }
-    basis.loc[loc_dict] = (inner_region + inner_index-1).squeeze().values
+    basis.loc[loc_dict] = (inner_region + inner_index - 1).squeeze().values
 
     basis += 1  # intem_region_definitions.nc regions start at 0, not 1
 
@@ -164,7 +187,9 @@ def weighted_fixed_outer_regions_basis(merged_data: xr.DataTree, nbasis: int = 2
 
 
 # %%
-basis_functions = [weighted_fixed_outer_regions_basis(merged_data) for merged_data in all_merged_data]
+basis_functions = [
+    weighted_fixed_outer_regions_basis(merged_data) for merged_data in all_merged_data
+]
 
 # %%
 # %run inversions_experimental_code/basis_functions.py
@@ -176,7 +201,7 @@ bf1 = BasisFunctions(basis_functions[0], all_merged_data[0].flux["flat-annual-to
 import geopandas as gpd
 import matplotlib.pyplot as plt
 
-world = gpd.read_file("natural_earth_50.zip")  
+world = gpd.read_file("natural_earth_50.zip")
 
 # %%
 fig, ax = plt.subplots(figsize=(15, 8))
@@ -184,20 +209,31 @@ fig, ax = plt.subplots(figsize=(15, 8))
 lat_min, lat_max = 40, 70
 lon_min, lon_max = -20, 20
 
-#lat_min, lat_max = basis_functions[0].lat.min().values, basis_functions[0].lat.max().values
-#lon_min, lon_max = basis_functions[0].lon.min().values, basis_functions[0].lon.max().values
+# lat_min, lat_max = basis_functions[0].lat.min().values, basis_functions[0].lat.max().values
+# lon_min, lon_max = basis_functions[0].lon.min().values, basis_functions[0].lon.max().values
 
 
 bf1.plot(shuffle=True)
-world.boundary.plot(ax=ax, linewidth=0.6, edgecolor='white')  # or .plot(facecolor='none')
+world.boundary.plot(
+    ax=ax, linewidth=0.6, edgecolor="white"
+)  # or .plot(facecolor='none')
 ax.set_xlim(float(lon_min), float(lon_max))
 ax.set_ylim(float(lat_min), float(lat_max))
 
 # %%
-all_merged_data[0].scenario.map_over_datasets(lambda ds: bf1.sensitivities(ds.fp_x_flux).rename("H").to_dataset() if "fp_x_flux" in ds.data_vars else ds)
+all_merged_data[0].scenario.map_over_datasets(
+    lambda ds: (
+        bf1.sensitivities(ds.fp_x_flux).rename("H").to_dataset()
+        if "fp_x_flux" in ds.data_vars
+        else ds
+    )
+)
 
 # %%
-bf_objs = [BasisFunctions(bf, md.flux["flat-annual-total"]) for bf, md in zip(basis_functions, all_merged_data)]
+bf_objs = [
+    BasisFunctions(bf, md.flux["flat-annual-total"])
+    for bf, md in zip(basis_functions, all_merged_data)
+]
 
 
 # %%
@@ -206,7 +242,11 @@ def apply_basis_functions(ds: xr.Dataset, bf: BasisFunctions) -> xr.Dataset:
         return ds
     return bf.sensitivities(ds.fp_x_flux).rename("H").to_dataset()
 
-h_matrix_datatrees = [md.map_over_datasets(partial(apply_basis_functions, bf=bf)) for md, bf in zip(all_merged_data, bf_objs)]
+
+h_matrix_datatrees = [
+    md.map_over_datasets(partial(apply_basis_functions, bf=bf))
+    for md, bf in zip(all_merged_data, bf_objs)
+]
 
 # %%
 h_matrix_datatrees[0]
@@ -215,6 +255,7 @@ h_matrix_datatrees[0]
 # %%
 def concat_dict(ds_dict: dict[str, xr.Dataset], dim: str) -> xr.Dataset:
     return xr.concat([v.expand_dims({dim: [k]}) for k, v in ds_dict.items()], dim=dim)
+
 
 def concat_tree(dt: xr.DataTree, dim: str) -> xr.Dataset:
     ds_dict = {k: v.to_dataset() for k, v in dt.items()}
@@ -235,8 +276,17 @@ def nesw_bc_basis(ds: xr.Dataset) -> xr.DataArray:
 
 
 # %%
-h_bc_matrices = [concat_tree(md.scenario.map_over_datasets(lambda ds: nesw_bc_basis(ds).rename("H_bc").to_dataset() if "bc_n" in ds else ds), dim="site")
-                 for md in all_merged_data]
+h_bc_matrices = [
+    concat_tree(
+        md.scenario.map_over_datasets(
+            lambda ds: (
+                nesw_bc_basis(ds).rename("H_bc").to_dataset() if "bc_n" in ds else ds
+            )
+        ),
+        dim="site",
+    )
+    for md in all_merged_data
+]
 
 # %%
 h_bc_matrices[0]
@@ -246,7 +296,9 @@ h_bc_matrices[0]
 
 # %%
 combined_obs["mf_repeatability"] = combined_obs["mf_repeatability"].astype("float32")
-combined_obs["mf_error"] = np.sqrt(combined_obs.mf_repeatability**2 + combined_obs.mf_variability**2)
+combined_obs["mf_error"] = np.sqrt(
+    combined_obs.mf_repeatability**2 + combined_obs.mf_variability**2
+)
 
 # %%
 from typing import Literal
@@ -291,7 +343,7 @@ def make_dates_df(
     dates_df = pd.DataFrame({"start_date": start_dates, "end_date": end_dates})
 
     if array_job_id:
-        dates_df.index +=1
+        dates_df.index += 1
         dates_df = dates_df.rename_axis("array_job_id")
 
     return dates_df
@@ -310,6 +362,7 @@ split_obs = [so.assign_coords(site=split_obs[0].site.str.upper()) for so in spli
 
 # %%
 from collections import defaultdict
+
 # add info for later filtering
 inlet_infos = []
 for md in all_merged_data:
@@ -330,27 +383,49 @@ for md in all_merged_data:
 
 # %%
 def func(ds):
-    dvs = [dv for dv in ds.data_vars if (ds[dv].dims == ("time",)) & (not str(dv).startswith("mf"))]
+    dvs = [
+        dv
+        for dv in ds.data_vars
+        if (ds[dv].dims == ("time",)) & (not str(dv).startswith("mf"))
+    ]
     return ds[dvs]
 
-met_data = [concat_tree(md.scenario.map_over_datasets(func), dim="site") for md in all_merged_data]
+
+met_data = [
+    concat_tree(md.scenario.map_over_datasets(func), dim="site")
+    for md in all_merged_data
+]
 
 # %%
-all_data = [xr.merge([h, hbc, obs, iinfo, met], join="left") for h, hbc, obs, iinfo, met in zip(h_matrices, h_bc_matrices, split_obs, inlet_infos, met_data)]
+all_data = [
+    xr.merge([h, hbc, obs, iinfo, met], join="left")
+    for h, hbc, obs, iinfo, met in zip(
+        h_matrices, h_bc_matrices, split_obs, inlet_infos, met_data
+    )
+]
 
 # %%
 all_data[0]
 
 # %%
-all_data[0].where((all_data[0].atmosphere_boundary_layer_thickness.compute() > 200.0) 
-                  | (all_data[0].site.isin(("CMN", "JFJ"))
-                  | (all_data[0].atmosphere_boundary_layer_thickness.compute() > 50.0 + all_data[0].inlet_height_magl.compute())  
-                    )).stack(nmeasure=("site", "time")).dropna("nmeasure")
+all_data[0].where(
+    (all_data[0].atmosphere_boundary_layer_thickness.compute() > 200.0)
+    | (
+        all_data[0].site.isin(("CMN", "JFJ"))
+        | (
+            all_data[0].atmosphere_boundary_layer_thickness.compute()
+            > 50.0 + all_data[0].inlet_height_magl.compute()
+        )
+    )
+).stack(nmeasure=("site", "time")).dropna("nmeasure")
 
 
 # %%
 def local_time(data):
-    return data.time + xr.apply_ufunc(lambda x: pd.to_timedelta(24 * 60 * x / 360.0, unit="h"), data.inlet_longitude)
+    return data.time + xr.apply_ufunc(
+        lambda x: pd.to_timedelta(24 * 60 * x / 360.0, unit="h"), data.inlet_longitude
+    )
+
 
 def local_hour(data):
     return local_time(data).dt.hour
@@ -372,7 +447,7 @@ for data in all_data:
 # %%
 # !ls -lsth {data_path}
 # #files = !ls {data_path} | grep synth_merged
-#for file in files:
+# for file in files:
 # #    !rm {data_path / file}
 
 # %%
@@ -389,18 +464,30 @@ all_data[0]
 # %% [markdown]
 # We need PBLH aligned with this style of dataset.
 
+
 # %%
 def func(ds):
-    dvs = [dv for dv in ds.data_vars if (ds[dv].dims == ("time",)) & (not str(dv).startswith("mf"))]
+    dvs = [
+        dv
+        for dv in ds.data_vars
+        if (ds[dv].dims == ("time",)) & (not str(dv).startswith("mf"))
+    ]
     return ds[dvs]
 
-met_data = [concat_tree(md.scenario.map_over_datasets(func), dim="site") for md in all_merged_data]
+
+met_data = [
+    concat_tree(md.scenario.map_over_datasets(func), dim="site")
+    for md in all_merged_data
+]
 
 # %%
 met_data
 
 # %%
-all_data[0].where((met_data[0].atmosphere_boundary_layer_thickness.compute() > 200.0) | all_data[0].site.isin(["CMN", "JFJ"]))
+all_data[0].where(
+    (met_data[0].atmosphere_boundary_layer_thickness.compute() > 200.0)
+    | all_data[0].site.isin(["CMN", "JFJ"])
+)
 
 # %%
 all_merged_data[0]
@@ -418,18 +505,33 @@ ihms.index.name = "site"
 inlet_height_da = ihms.to_xarray()
 
 # %%
-all_data[0].where((met_data[0].atmosphere_boundary_layer_thickness.compute() > 50.0 + inlet_height_da) | all_data[0].site.isin(["CMN", "JFJ"]), drop=True)
+all_data[0].where(
+    (met_data[0].atmosphere_boundary_layer_thickness.compute() > 50.0 + inlet_height_da)
+    | all_data[0].site.isin(["CMN", "JFJ"]),
+    drop=True,
+)
 
 
 # %%
 def pblh_min_filter(data, met, threshold=200.0, no_filter: list[str] | None = None):
     no_filter = no_filter or []
-    return data.where((met.atmosphere_boundary_layer_thickness.compute() > threshold) | data.site.isin(no_filter))
+    return data.where(
+        (met.atmosphere_boundary_layer_thickness.compute() > threshold)
+        | data.site.isin(no_filter)
+    )
 
-def pblh_diff_filter(data, met, diff_threshold=200.0, no_filter: list[str] | None = None):
+
+def pblh_diff_filter(
+    data, met, diff_threshold=200.0, no_filter: list[str] | None = None
+):
     no_filter = no_filter or []
-    return data.where((met.atmosphere_boundary_layer_thickness.compute() > diff_threshold + inlet_height_da) | data.site.isin(no_filter))
-
+    return data.where(
+        (
+            met.atmosphere_boundary_layer_thickness.compute()
+            > diff_threshold + inlet_height_da
+        )
+        | data.site.isin(no_filter)
+    )
 
 
 # %%
@@ -457,6 +559,7 @@ all_data[0]
 
 # %%
 from pathlib import Path
+
 sf6_path = Path("/group/chem/acrg/PARIS_inversions/sf6/")
 sf6_base_nid2025_path = sf6_path / "RHIME_NAME_EUROPE_FLAT_ConfigNID2025_sf6_yearly"
 # ini_files = !ls {sf6_base_nid2025_path / "*.ini"}
@@ -468,9 +571,17 @@ ini_files
 
 
 # %%
-def pblh_filters(ds: xr.Dataset, no_filter=("CMN", "JFJ"), pblh_min_thres: float = 200.0, pblh_diff_thres: float = 50.0) -> xr.Dataset:
+def pblh_filters(
+    ds: xr.Dataset,
+    no_filter=("CMN", "JFJ"),
+    pblh_min_thres: float = 200.0,
+    pblh_diff_thres: float = 50.0,
+) -> xr.Dataset:
     pblh_min_filt = ds.atmosphere_boundary_layer_thickness.compute() > pblh_min_thres
-    pblh_diff_filt = ds.atmosphere_boundary_layer_thickness.compute() > pblh_diff_thres + ds.inlet_height_magl.compute()
+    pblh_diff_filt = (
+        ds.atmosphere_boundary_layer_thickness.compute()
+        > pblh_diff_thres + ds.inlet_height_magl.compute()
+    )
     no_filt = ds.site.isin(no_filter)
     return ds.where(no_filt | (pblh_min_filt & pblh_diff_filt))
 
@@ -485,10 +596,16 @@ def percentile_error_method(ds: xr.Dataset) -> np.ndarray:
     return res_err.values
 
 
-
 # %%
 def select_inversion_data_vars(ds: xr.Dataset) -> xr.Dataset:
-    inversion_data_vars = ["H", "H_bc", "mf", "mf_error", "mf_repeatability", "mf_variability"]
+    inversion_data_vars = [
+        "H",
+        "H_bc",
+        "mf",
+        "mf_error",
+        "mf_repeatability",
+        "mf_variability",
+    ]
     dvs = [dv for dv in ds.data_vars if dv in inversion_data_vars]
     return ds[dvs]
 
@@ -526,13 +643,18 @@ def make_inv_inputs2(
 
     # set up min error in more complicated cases
     if "min_error" not in ds:
+
         def setup_min_error2(min_err_values, site_indicator):
             return min_err_values[..., site_indicator]
-        ds["min_error"] = xr.apply_ufunc(lambda x: setup_min_error2(min_err_values, x), ds.site_indicator, input_core_dims=[["nmeasure"]], output_core_dims=[list(ds.mf.dims)])
 
+        ds["min_error"] = xr.apply_ufunc(
+            lambda x: setup_min_error2(min_err_values, x),
+            ds.site_indicator,
+            input_core_dims=[["nmeasure"]],
+            output_core_dims=[list(ds.mf.dims)],
+        )
 
-    #ds["basis_flat"] = fp_data[".basis"]
-
+    # ds["basis_flat"] = fp_data[".basis"]
 
     return ds
 
@@ -544,18 +666,35 @@ params.get("calculate_min_error")
 
 # %%
 def filtered_inv_input(data: xr.Dataset, bc_freq, sigma_freq, min_error) -> xr.Dataset:
-    return (data
-        .pipe(pblh_filters)
-        .pipe(select_inversion_data_vars)
-        .pipe(make_inv_inputs2, bc_freq=bc_freq, sigma_freq=sigma_freq, min_error=min_error)
-        ).compute().dropna("nmeasure")
+    return (
+        (
+            data.pipe(pblh_filters)
+            .pipe(select_inversion_data_vars)
+            .pipe(
+                make_inv_inputs2,
+                bc_freq=bc_freq,
+                sigma_freq=sigma_freq,
+                min_error=min_error,
+            )
+        )
+        .compute()
+        .dropna("nmeasure")
+    )
 
 
 # %% [markdown]
 # #### Making models
 
+
 # %%
-def rhime_model(inv_input: xr.Dataset, x_prior: dict, bc_prior: dict, sig_prior: dict, offset: bool = True, pefo: bool = True) -> pm.Model:
+def rhime_model(
+    inv_input: xr.Dataset,
+    x_prior: dict,
+    bc_prior: dict,
+    sig_prior: dict,
+    offset: bool = True,
+    pefo: bool = True,
+) -> pm.Model:
     with pm.Model() as model:
         mu = add_linear_component(
             inv_input.H,
@@ -576,7 +715,14 @@ def rhime_model(inv_input: xr.Dataset, x_prior: dict, bc_prior: dict, sig_prior:
         if offset:
             mu_bc = mu_bc + make_offset(inv_input.site_indicator, {"pdf": "normal"})
 
-        add_old_likelihood(inv_input, sig_prior, mu=mu, mu_bc=mu_bc, power=1.99, pollution_events_from_obs=pefo)
+        add_old_likelihood(
+            inv_input,
+            sig_prior,
+            mu=mu,
+            mu_bc=mu_bc,
+            power=1.99,
+            pollution_events_from_obs=pefo,
+        )
 
     return model
 
@@ -587,7 +733,9 @@ def rhime_model(inv_input: xr.Dataset, x_prior: dict, bc_prior: dict, sig_prior:
 # #### Parameter setup
 
 # %%
-experiment_configs = pd.DataFrame([{k: v[0] for k, v in val.items()} for val in instr_to_dims.values()])
+experiment_configs = pd.DataFrame(
+    [{k: v[0] for k, v in val.items()} for val in instr_to_dims.values()]
+)
 experiment_configs["pefo"] = [[True, False]] * 30
 experiment_configs["offset"] = [[True, False]] * 30
 experiment_configs = experiment_configs.explode("pefo", ignore_index=True)
@@ -595,17 +743,20 @@ experiment_configs = experiment_configs.explode("offset", ignore_index=True)
 experiment_configs
 
 # %%
-#experiment_configs.to_csv(data_path / "experiment_configs1.csv")
+# experiment_configs.to_csv(data_path / "experiment_configs1.csv")
 experiment_configs = pd.read_csv(data_path / "experiment_configs1.csv")
 
 # %%
-ec1_subset = experiment_configs.loc[(experiment_configs.bias.isin([0.0, -0.1])) & (experiment_configs.noise.isin([0.0, 0.6, 2.0]))]
+ec1_subset = experiment_configs.loc[
+    (experiment_configs.bias.isin([0.0, -0.1]))
+    & (experiment_configs.noise.isin([0.0, 0.6, 2.0]))
+]
 
 # %%
 ec1_subset
 
 # %%
-#ec1_subset.iloc[0]
+# ec1_subset.iloc[0]
 for num, row in ec1_subset.iterrows():
     print(num, row, type(row))
     break
@@ -614,8 +765,8 @@ for num, row in ec1_subset.iterrows():
 # %%
 def base_data_args(params: dict) -> dict:
     result = dict(
-        bc_freq=params.get("bc_freq"), 
-        sigma_freq=params.get("sigma_freq"), 
+        bc_freq=params.get("bc_freq"),
+        sigma_freq=params.get("sigma_freq"),
         min_error=params.get("calculate_min_error") or params.get("min_error", 0.0),
     )
     return result
@@ -630,7 +781,9 @@ def model_args(params: dict, exp_conf: dict) -> dict:
         "offset": exp_conf.get("offset", True),
         "pefo": exp_conf.get("pefo", True),
     }
-    if result["x_prior"].get("pdf", "").lower() == "lognormal" and params.get("reparameterise_log_normal"):
+    if result["x_prior"].get("pdf", "").lower() == "lognormal" and params.get(
+        "reparameterise_log_normal"
+    ):
         result["x_prior"]["reparameterise"] = True
     return result
 
@@ -642,7 +795,9 @@ def model_args(params: dict, exp_conf: dict) -> dict:
 exp_conf = dict(ec1_subset.iloc[0])
 params = read_ini(ini_files[0])
 
-inv_input = filtered_inv_input(all_data[0], **base_data_args(params)).sel(noise=exp_conf["noise"], bias=exp_conf["bias"])
+inv_input = filtered_inv_input(all_data[0], **base_data_args(params)).sel(
+    noise=exp_conf["noise"], bias=exp_conf["bias"]
+)
 model = rhime_model(inv_input, **model_args(params, exp_conf))
 
 # %%
@@ -680,11 +835,23 @@ import zarr
 
 def zarr_trace(out_path: Path, out_name: str):
     store = zarr.DirectoryStore(out_path / (out_name + "_trace.zarr"))
-    return pm.backends.zarr.ZarrTrace(store, compressor=pm.util.UNSET, draws_per_chunk=200, include_transformed=True)
+    return pm.backends.zarr.ZarrTrace(
+        store, compressor=pm.util.UNSET, draws_per_chunk=200, include_transformed=True
+    )
 
 
 # %%
-def run_inversion(data_path: Path, out_path: Path, exp_num: int, exp_conf: dict, ini_file: str, sample_kwargs: dict, zarr_backend: bool = True, save_trace: bool = True, error_noise: float | None = None):
+def run_inversion(
+    data_path: Path,
+    out_path: Path,
+    exp_num: int,
+    exp_conf: dict,
+    ini_file: str,
+    sample_kwargs: dict,
+    zarr_backend: bool = True,
+    save_trace: bool = True,
+    error_noise: float | None = None,
+):
     params = dict(read_ini(ini_file))
     year = params["start_date"][:4]
     print(f"Experiment {exp_num}: year {year}, {exp_conf}")
@@ -700,10 +867,14 @@ def run_inversion(data_path: Path, out_path: Path, exp_num: int, exp_conf: dict,
         inv_input = inv_input_all.sel(noise=exp_conf["noise"], bias=exp_conf["bias"])
 
         if error_noise is not None:
-            inv_input["mf_error"] = inv_input_all.mf_error.sel(noise=error_noise, bias=0.0)
+            inv_input["mf_error"] = inv_input_all.mf_error.sel(
+                noise=error_noise, bias=0.0
+            )
 
     inv_input = inv_input.dropna("nmeasure")
-    print(f"Experiment {exp_num}, year {Path(merged_data_path).name[:-4]} building model.")
+    print(
+        f"Experiment {exp_num}, year {Path(merged_data_path).name[:-4]} building model."
+    )
     model = rhime_model(inv_input, **model_args(params, exp_conf))
     print(f"Experiment {exp_num}, year {Path(merged_data_path).name[:-4]} sampling.")
     idata = pm.sample(model=model, **sample_kwargs)
@@ -731,8 +902,8 @@ from dask.distributed import Client
 cluster = SLURMCluster(
     processes=1,
     cores=8,
-    memory='20GB',
-    walltime='02:00:00',
+    memory="20GB",
+    walltime="02:00:00",
     account="chem007981",
     log_directory=str(log_path),
 )
@@ -749,7 +920,10 @@ cluster.scale(jobs=6)
 dict(sorted(cluster.workers.items(), key=lambda x: x[0]))
 
 # %%
-available_workers = [v.get("id") for v in client.scheduler_info(n_workers=len(cluster.workers))["workers"].values()]
+available_workers = [
+    v.get("id")
+    for v in client.scheduler_info(n_workers=len(cluster.workers))["workers"].values()
+]
 
 # %%
 len(available_workers)
@@ -764,13 +938,15 @@ for k, v in cluster.workers.items():
 
 # %%
 # inspect workers
-workers = client.scheduler_info(n_workers=len(cluster.workers))["workers"]  # dict: {worker_address: info}
+workers = client.scheduler_info(n_workers=len(cluster.workers))[
+    "workers"
+]  # dict: {worker_address: info}
 for addr, info in workers.items():
     print(addr)
     pprint(info)
     break
-    print("  host:", info.get("host"))            # hostname where worker runs
-    print("  pid:", info.get("pid"))              # worker process id
+    print("  host:", info.get("host"))  # hostname where worker runs
+    print("  pid:", info.get("pid"))  # worker process id
     print("  nthreads:", info.get("nthreads"))
     print("  memory_limit:", info.get("memory_limit"))
     print("  last_seen:", info.get("last-seen"))  # timestamp (may be milliseconds)
@@ -782,23 +958,25 @@ done_keys = []
 # %%
 from collections import defaultdict
 import time
+
 futures = defaultdict(list)  # futures keyed by experiment config number
 
 count = 0
-workers = available_workers #list(cluster.workers.keys())
+workers = available_workers  # list(cluster.workers.keys())
 for ini_file in ini_files[:5]:
     for exp_num, row in ec1_subset2.iterrows():
         exp_conf = dict(row)
 
-        func = partial(run_inversion, 
-                       data_path=data_path, 
-                       out_path=out_path, 
-                       exp_num=exp_num, 
-                       exp_conf=exp_conf, 
-                       ini_file=ini_file, 
-                       sample_kwargs=sample_kwargs,
-                       zarr_backend=False,
-                      )
+        func = partial(
+            run_inversion,
+            data_path=data_path,
+            out_path=out_path,
+            exp_num=exp_num,
+            exp_conf=exp_conf,
+            ini_file=ini_file,
+            sample_kwargs=sample_kwargs,
+            zarr_backend=False,
+        )
         worker_name = workers[count]
         key = f"exp-{exp_num}_{Path(ini_file).name[:-4]}"
         if key in done_keys or key in processing:
@@ -808,8 +986,7 @@ for ini_file in ini_files[:5]:
         time.sleep(2)
         count += 1
         count = count % len(available_workers)
-        
-    
+
 
 # %%
 futures
@@ -822,7 +999,8 @@ for v in futures.values():
 
 # %%
 from pprint import pprint
-#dir(client)
+
+# dir(client)
 pprint(client.processing())
 pprint(client.futures)
 # #client.retry?
@@ -857,7 +1035,7 @@ for k, v in futures.items():
             print(f)
 
 # %%
-#dir(client)
+# dir(client)
 to_dec = []
 for k, v in client.refcount.items():
     if k in done_keys:
@@ -902,7 +1080,15 @@ funcs = []
 for i, (exp_num, row) in enumerate(ec1_subset.iterrows()):
     exp_conf = dict(row)
     for ini_file in ini_files:
-        func = partial(run_inversion, data_path=data_path, out_path=out_path, exp_num=exp_num, exp_conf=exp_conf, ini_file=ini_file, sample_kwargs=sample_kwargs)
+        func = partial(
+            run_inversion,
+            data_path=data_path,
+            out_path=out_path,
+            exp_num=exp_num,
+            exp_conf=exp_conf,
+            ini_file=ini_file,
+            sample_kwargs=sample_kwargs,
+        )
         funcs.append(func)
 
 # %%
@@ -924,7 +1110,9 @@ out_path = funcs[0].keywords["out_path"]
 # Let's test on another config.
 
 # %%
-ec1_subset2 = ec1_subset.loc[(ec1_subset.offset == False) & (ec1_subset.bias == 0.0) & (ec1_subset.noise != 0.0)].sort_values(["noise", "pefo"])
+ec1_subset2 = ec1_subset.loc[
+    (ec1_subset.offset == False) & (ec1_subset.bias == 0.0) & (ec1_subset.noise != 0.0)
+].sort_values(["noise", "pefo"])
 ec1_subset2
 
 # %%
@@ -934,26 +1122,29 @@ sample_kwargs
 exp_num = 97
 exp_conf = dict(ec1_subset.loc[exp_num])
 ini_file = ini_files[0]
-result = run_inversion(data_path=data_path, 
-                       out_path=out_path, 
-                       exp_num=exp_num,
-                       exp_conf=exp_conf,
-                       ini_file=ini_file,
-                       sample_kwargs=sample_kwargs | {"progressbar": True, "tune": 100, "draws": 100},
-                       error_noise=0.6,
-                      )
+result = run_inversion(
+    data_path=data_path,
+    out_path=out_path,
+    exp_num=exp_num,
+    exp_conf=exp_conf,
+    ini_file=ini_file,
+    sample_kwargs=sample_kwargs | {"progressbar": True, "tune": 100, "draws": 100},
+    error_noise=0.6,
+)
 
 # %%
 result
 
 # %%
-result2 = run_inversion(data_path=data_path, 
-                       out_path=out_path, 
-                       exp_num=exp_num,
-                       exp_conf=exp_conf,
-                       ini_file=ini_file,
-                       sample_kwargs=sample_kwargs | {"progressbar": True, "tune": 100, "draws": 100, "blas_cores": 4},
-                      )
+result2 = run_inversion(
+    data_path=data_path,
+    out_path=out_path,
+    exp_num=exp_num,
+    exp_conf=exp_conf,
+    ini_file=ini_file,
+    sample_kwargs=sample_kwargs
+    | {"progressbar": True, "tune": 100, "draws": 100, "blas_cores": 4},
+)
 
 # %%
 from openghg.retrieve import *
@@ -963,17 +1154,25 @@ flux_obj = get_flux(species="sf6", domain="europe", source="edgar-annual-total")
 # %%
 import matplotlib.pyplot as plt
 
-fix, axs = plt.subplots(1, 3, figsize=(15,7))
+fix, axs = plt.subplots(1, 3, figsize=(15, 7))
 vmin, vmax = -39, -28.5
 lat_slice = slice(37, None)
 lon_slice = slice(-14, 25)
 
-flux_smoothed = bf_objs[0].interpolate(bf_objs[0].project(flux_obj.data.flux.isel(time=0), normalise=True))
-np.log(flux_smoothed * (bf_objs[0].flux > 0).astype(float)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0], vmin=vmin, vmax=vmax)
-#np.log(flux_obj.data.flux.isel(time=0)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0], vmin=vmin, vmax=vmax)
+flux_smoothed = bf_objs[0].interpolate(
+    bf_objs[0].project(flux_obj.data.flux.isel(time=0), normalise=True)
+)
+np.log(flux_smoothed * (bf_objs[0].flux > 0).astype(float)).sel(
+    lat=lat_slice, lon=lon_slice
+).plot(ax=axs[0], vmin=vmin, vmax=vmax)
+# np.log(flux_obj.data.flux.isel(time=0)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0], vmin=vmin, vmax=vmax)
 
-np.log(bf_objs[0].interpolate(result2.posterior.x.mean(["chain", "draw"]), flux=True)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[1], vmin=vmin, vmax=vmax)
-np.log(bf_objs[0].flux).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[2], vmin=vmin, vmax=vmax)
+np.log(
+    bf_objs[0].interpolate(result2.posterior.x.mean(["chain", "draw"]), flux=True)
+).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[1], vmin=vmin, vmax=vmax)
+np.log(bf_objs[0].flux).sel(lat=lat_slice, lon=lon_slice).plot(
+    ax=axs[2], vmin=vmin, vmax=vmax
+)
 
 # %%
 np.log(flux_obj.data.flux.isel(time=0)).plot(vmin=vmin, vmax=vmax)
@@ -988,14 +1187,16 @@ exp_num = 117
 exp_conf = dict(ec1_subset.loc[exp_num])
 ini_file = ini_files[0]
 
-result3 = run_inversion(data_path=data_path, 
-                       out_path=out_path, 
-                       exp_num=exp_num,
-                       exp_conf=exp_conf,
-                       ini_file=ini_file,
-                       sample_kwargs=sample_kwargs | {"progressbar": True, "tune": 200, "draws": 400, "blas_cores": 8},
-                       error_noise=0.6,
-                      )
+result3 = run_inversion(
+    data_path=data_path,
+    out_path=out_path,
+    exp_num=exp_num,
+    exp_conf=exp_conf,
+    ini_file=ini_file,
+    sample_kwargs=sample_kwargs
+    | {"progressbar": True, "tune": 200, "draws": 400, "blas_cores": 8},
+    error_noise=0.6,
+)
 
 # %%
 # for this run, I've added the option to reparameterise log normals
@@ -1003,18 +1204,20 @@ exp_num = 118
 exp_conf = dict(ec1_subset.loc[exp_num])
 ini_file = ini_files[0]
 
-result4 = run_inversion(data_path=data_path, 
-                       out_path=out_path, 
-                       exp_num=exp_num,
-                       exp_conf=exp_conf,
-                       ini_file=ini_file,
-                       sample_kwargs=sample_kwargs | {"progressbar": True, "tune": 200, "draws": 400, "blas_cores": 8},
-                      )
+result4 = run_inversion(
+    data_path=data_path,
+    out_path=out_path,
+    exp_num=exp_num,
+    exp_conf=exp_conf,
+    ini_file=ini_file,
+    sample_kwargs=sample_kwargs
+    | {"progressbar": True, "tune": 200, "draws": 400, "blas_cores": 8},
+)
 
 # %%
 import matplotlib.pyplot as plt
 
-fig, axs = plt.subplots(2, 2, figsize=(15,15))
+fig, axs = plt.subplots(2, 2, figsize=(15, 15))
 vmin, vmax = -39, -28
 
 lat_slice = slice(37, None)
@@ -1025,26 +1228,44 @@ lat_min, lat_max = lat_slice.start, lat_slice.stop
 lon_min, lon_max = lon_slice.start, lon_slice.stop
 
 # plot prior
-np.log(bf_objs[0].flux).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0, 0], vmin=vmin, vmax=vmax, label="prior")
+np.log(bf_objs[0].flux).sel(lat=lat_slice, lon=lon_slice).plot(
+    ax=axs[0, 0], vmin=vmin, vmax=vmax, label="prior"
+)
 axs[0, 0].set_title("prior")
 
 # plot true
-flux_smoothed = bf_objs[0].interpolate(bf_objs[0].project(flux_obj.data.flux.isel(time=0), normalise=True))
-np.log(flux_smoothed * (bf_objs[0].flux > 0).astype(float)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0, 1], vmin=vmin, vmax=vmax, label="true, smoothed to basis, masked by prior")
-#np.log(flux_obj.data.flux.isel(time=0) * (bf_objs[0].flux > 0).astype(float)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0, 1], vmin=vmin, vmax=vmax)
+flux_smoothed = bf_objs[0].interpolate(
+    bf_objs[0].project(flux_obj.data.flux.isel(time=0), normalise=True)
+)
+np.log(flux_smoothed * (bf_objs[0].flux > 0).astype(float)).sel(
+    lat=lat_slice, lon=lon_slice
+).plot(
+    ax=axs[0, 1], vmin=vmin, vmax=vmax, label="true, smoothed to basis, masked by prior"
+)
+# np.log(flux_obj.data.flux.isel(time=0) * (bf_objs[0].flux > 0).astype(float)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0, 1], vmin=vmin, vmax=vmax)
 axs[0, 1].set_title("true")
 
 # plot pefo true
-np.log(bf_objs[0].interpolate(result3.posterior.x.mean(["chain", "draw"]), flux=True)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[1, 0], vmin=vmin, vmax=vmax, label="no noise, no bias, pefo True, no offset")
+np.log(
+    bf_objs[0].interpolate(result3.posterior.x.mean(["chain", "draw"]), flux=True)
+).sel(lat=lat_slice, lon=lon_slice).plot(
+    ax=axs[1, 0], vmin=vmin, vmax=vmax, label="no noise, no bias, pefo True, no offset"
+)
 axs[1, 0].set_title("exp. 117, no noise, pefo True, offset True (by mistake)")
 
 # plot pefo false
-np.log(bf_objs[0].interpolate(result4.posterior.x.mean(["chain", "draw"]), flux=True)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[1, 1], vmin=vmin, vmax=vmax, label="no noise, no bias, pefo False, no offset")
+np.log(
+    bf_objs[0].interpolate(result4.posterior.x.mean(["chain", "draw"]), flux=True)
+).sel(lat=lat_slice, lon=lon_slice).plot(
+    ax=axs[1, 1], vmin=vmin, vmax=vmax, label="no noise, no bias, pefo False, no offset"
+)
 axs[1, 1].set_title("exp. 118")
 
 # plot country borders
 for ax in axs.flat:
-    world.boundary.plot(ax=ax, linewidth=0.6, edgecolor='white')  # or .plot(facecolor='none')
+    world.boundary.plot(
+        ax=ax, linewidth=0.6, edgecolor="white"
+    )  # or .plot(facecolor='none')
     ax.set_xlim(lon_min, lon_max)
     ax.set_ylim(lat_min, lat_max)
 
@@ -1058,30 +1279,34 @@ exp_num = 97
 exp_conf = dict(ec1_subset.loc[exp_num])
 ini_file = ini_files[0]
 
-result6 = run_inversion(data_path=data_path, 
-                       out_path=out_path, 
-                       exp_num=exp_num,
-                       exp_conf=exp_conf,
-                       ini_file=ini_file,
-                       sample_kwargs=sample_kwargs | {"progressbar": True, "tune": 200, "draws": 400, "blas_cores": 8},
-                      )
+result6 = run_inversion(
+    data_path=data_path,
+    out_path=out_path,
+    exp_num=exp_num,
+    exp_conf=exp_conf,
+    ini_file=ini_file,
+    sample_kwargs=sample_kwargs
+    | {"progressbar": True, "tune": 200, "draws": 400, "blas_cores": 8},
+)
 
 # %%
 exp_num = 99
 exp_conf = dict(ec1_subset.loc[exp_num])
 ini_file = ini_files[0]
 
-result5 = run_inversion(data_path=data_path, 
-                       out_path=out_path, 
-                       exp_num=exp_num,
-                       exp_conf=exp_conf,
-                       ini_file=ini_file,
-                       sample_kwargs=sample_kwargs | {"progressbar": True, "tune": 200, "draws": 400, "blas_cores": 8},
-                      )
+result5 = run_inversion(
+    data_path=data_path,
+    out_path=out_path,
+    exp_num=exp_num,
+    exp_conf=exp_conf,
+    ini_file=ini_file,
+    sample_kwargs=sample_kwargs
+    | {"progressbar": True, "tune": 200, "draws": 400, "blas_cores": 8},
+)
 
 # %%
 
-fig, axs = plt.subplots(3, 2, figsize=(15,22))
+fig, axs = plt.subplots(3, 2, figsize=(15, 22))
 vmin, vmax = -39, -28
 
 lat_slice = slice(37, None)
@@ -1092,34 +1317,61 @@ lat_min, lat_max = lat_slice.start, lat_slice.stop
 lon_min, lon_max = lon_slice.start, lon_slice.stop
 
 # plot prior
-np.log(bf_objs[0].flux).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0, 0], vmin=vmin, vmax=vmax, label="prior")
+np.log(bf_objs[0].flux).sel(lat=lat_slice, lon=lon_slice).plot(
+    ax=axs[0, 0], vmin=vmin, vmax=vmax, label="prior"
+)
 axs[0, 0].set_title("prior")
 
 # plot true
-flux_smoothed = bf_objs[0].interpolate(bf_objs[0].project(flux_obj.data.flux.isel(time=0), normalise=True))
-#np.log(flux_smoothed * (bf_objs[0].flux > 0).astype(float)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0, 1], vmin=vmin, vmax=vmax, label="true, smoothed to basis, masked by prior")
-np.log(flux_obj.data.flux.isel(time=0) * (bf_objs[0].flux > 0).astype(float)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0, 1], vmin=vmin, vmax=vmax)
+flux_smoothed = bf_objs[0].interpolate(
+    bf_objs[0].project(flux_obj.data.flux.isel(time=0), normalise=True)
+)
+# np.log(flux_smoothed * (bf_objs[0].flux > 0).astype(float)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0, 1], vmin=vmin, vmax=vmax, label="true, smoothed to basis, masked by prior")
+np.log(flux_obj.data.flux.isel(time=0) * (bf_objs[0].flux > 0).astype(float)).sel(
+    lat=lat_slice, lon=lon_slice
+).plot(ax=axs[0, 1], vmin=vmin, vmax=vmax)
 axs[0, 1].set_title("true")
 
 # plot pefo true
-np.log(bf_objs[0].interpolate(result3.posterior.x.mean(["chain", "draw"]), flux=True)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[1, 0], vmin=vmin, vmax=vmax, label="no noise, no bias, pefo True, no offset")
+np.log(
+    bf_objs[0].interpolate(result3.posterior.x.mean(["chain", "draw"]), flux=True)
+).sel(lat=lat_slice, lon=lon_slice).plot(
+    ax=axs[1, 0], vmin=vmin, vmax=vmax, label="no noise, no bias, pefo True, no offset"
+)
 axs[1, 0].set_title("exp. 117, no noise, pefo True, offset True (by mistake)")
 
 # plot pefo false
-np.log(bf_objs[0].interpolate(result4.posterior.x.mean(["chain", "draw"]), flux=True)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[1, 1], vmin=vmin, vmax=vmax, label="no noise, no bias, pefo False, no offset")
+np.log(
+    bf_objs[0].interpolate(result4.posterior.x.mean(["chain", "draw"]), flux=True)
+).sel(lat=lat_slice, lon=lon_slice).plot(
+    ax=axs[1, 1], vmin=vmin, vmax=vmax, label="no noise, no bias, pefo False, no offset"
+)
 axs[1, 1].set_title("exp. 118, no noise, pefo False")
 
 # plot pefo true, with noise
-np.log(bf_objs[0].interpolate(result6.posterior.x.mean(["chain", "draw"]), flux=True)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[2, 0], vmin=vmin, vmax=vmax, label="2.0 noise, no bias, pefo True, no offset")
+np.log(
+    bf_objs[0].interpolate(result6.posterior.x.mean(["chain", "draw"]), flux=True)
+).sel(lat=lat_slice, lon=lon_slice).plot(
+    ax=axs[2, 0], vmin=vmin, vmax=vmax, label="2.0 noise, no bias, pefo True, no offset"
+)
 axs[2, 0].set_title("exp. 97, 2.0 noise, pefo True")
 
 # plot pefo false, with noise
-np.log(bf_objs[0].interpolate(result5.posterior.x.mean(["chain", "draw"]), flux=True)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[2, 1], vmin=vmin, vmax=vmax, label="2.0 noise, no bias, pefo False, no offset")
+np.log(
+    bf_objs[0].interpolate(result5.posterior.x.mean(["chain", "draw"]), flux=True)
+).sel(lat=lat_slice, lon=lon_slice).plot(
+    ax=axs[2, 1],
+    vmin=vmin,
+    vmax=vmax,
+    label="2.0 noise, no bias, pefo False, no offset",
+)
 axs[2, 1].set_title("exp. 99, 2.0 noise, pefo False")
 
 # plot country borders
 for ax in axs.flat:
-    world.boundary.plot(ax=ax, linewidth=0.6, edgecolor='white')  # or .plot(facecolor='none')
+    world.boundary.plot(
+        ax=ax, linewidth=0.6, edgecolor="white"
+    )  # or .plot(facecolor='none')
     ax.set_xlim(lon_min, lon_max)
     ax.set_ylim(lat_min, lat_max)
 
@@ -1136,11 +1388,18 @@ from collections import namedtuple
 
 TraceInfo = namedtuple("TraceInfo", "exp_num, title, trace")
 
+
 def get_trace_info(year: int) -> list[TraceInfo]:
     traces = [az.InferenceData.from_netcdf(f) for f in out_path.glob(f"{year}*.nc")]
     exp_nums = [p.name.split("_")[-2] for p in list(out_path.glob(f"{year}*.nc"))]
-    titles = [f"Experiment {exp_num}: noise {row['noise']}, pefo {row['pefo']}" for exp_num, row in ec1_subset2.loc[map(int, exp_nums)].iterrows()]
-    return [TraceInfo(exp_num, title, trace) for exp_num, title, trace in zip(exp_nums, titles, traces)]
+    titles = [
+        f"Experiment {exp_num}: noise {row['noise']}, pefo {row['pefo']}"
+        for exp_num, row in ec1_subset2.loc[map(int, exp_nums)].iterrows()
+    ]
+    return [
+        TraceInfo(exp_num, title, trace)
+        for exp_num, title, trace in zip(exp_nums, titles, traces)
+    ]
 
 
 # %%
@@ -1156,7 +1415,10 @@ exps_2017
 ec1_subset2
 
 # %%
-titles = [f"Experiment {exp_num}: noise {row['noise']}, pefo {row['pefo']}" for exp_num, row in ec1_subset2.loc[map(int, exps_2017)].iterrows()]
+titles = [
+    f"Experiment {exp_num}: noise {row['noise']}, pefo {row['pefo']}"
+    for exp_num, row in ec1_subset2.loc[map(int, exps_2017)].iterrows()
+]
 
 # %%
 titles
@@ -1172,9 +1434,13 @@ bf_obj.flux
 # %%
 # !ls {data_path}
 
+
 # %%
 def get_fp_flux(year):
-    with xr.open_datatree(data_path / f"sf6_{year}-01-01_4h-no-basis-no-filt_merged-data.zarr.zip", engine="zarr") as dt:
+    with xr.open_datatree(
+        data_path / f"sf6_{year}-01-01_4h-no-basis-no-filt_merged-data.zarr.zip",
+        engine="zarr",
+    ) as dt:
         return mean_fp_x_flux(dt)
 
 
@@ -1186,7 +1452,7 @@ np.random.shuffle(bf_obj.labels_shuffled)
 
 # %%
 
-fig, axs = plt.subplots(4, 2, figsize=(15,29))
+fig, axs = plt.subplots(4, 2, figsize=(15, 29))
 vmin, vmax = -39, -28
 
 lat_slice = slice(37, None)
@@ -1197,20 +1463,34 @@ lat_min, lat_max = lat_slice.start, lat_slice.stop
 lon_min, lon_max = lon_slice.start, lon_slice.stop
 
 # plot prior
-np.log(bf_obj.flux).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs.flat[0], vmin=vmin, vmax=vmax, label="prior")
+np.log(bf_obj.flux).sel(lat=lat_slice, lon=lon_slice).plot(
+    ax=axs.flat[0], vmin=vmin, vmax=vmax, label="prior"
+)
 axs.flat[0].set_title("prior")
 
 # plot true
-flux_smoothed = bf_obj.interpolate(bf_obj.project(flux_obj.data.flux.isel(time=0), normalise=True))
-np.log(flux_smoothed * (bf_obj.flux > 0).astype(float)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0, 1], vmin=vmin, vmax=vmax, label="true, smoothed to basis, masked by prior")
-#np.log(flux_obj.data.flux.isel(time=0) * (bf_obj.flux > 0).astype(float)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs.flat[1], vmin=vmin, vmax=vmax)
+flux_smoothed = bf_obj.interpolate(
+    bf_obj.project(flux_obj.data.flux.isel(time=0), normalise=True)
+)
+np.log(flux_smoothed * (bf_obj.flux > 0).astype(float)).sel(
+    lat=lat_slice, lon=lon_slice
+).plot(
+    ax=axs[0, 1], vmin=vmin, vmax=vmax, label="true, smoothed to basis, masked by prior"
+)
+# np.log(flux_obj.data.flux.isel(time=0) * (bf_obj.flux > 0).astype(float)).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs.flat[1], vmin=vmin, vmax=vmax)
 axs.flat[1].set_title("true")
 
 for trace, title, ax in zip(traces_2017, titles, axs.flat[2:]):
-    np.log(bf_obj.interpolate(trace.posterior.x.mean(["chain", "draw"]), flux=True)).sel(lat=lat_slice, lon=lon_slice).plot(ax=ax, vmin=vmin, vmax=vmax, label="no noise, no bias, pefo True, no offset")
+    np.log(
+        bf_obj.interpolate(trace.posterior.x.mean(["chain", "draw"]), flux=True)
+    ).sel(lat=lat_slice, lon=lon_slice).plot(
+        ax=ax, vmin=vmin, vmax=vmax, label="no noise, no bias, pefo True, no offset"
+    )
     ax.set_title(title)
 
-np.log(fpflux).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs.flat[-2], label="mean fp x flux")
+np.log(fpflux).sel(lat=lat_slice, lon=lon_slice).plot(
+    ax=axs.flat[-2], label="mean fp x flux"
+)
 axs.flat[-2].set_title("mean fp x flux")
 
 bf_obj.plot(shuffle=True, ax=axs.flat[-1])
@@ -1218,7 +1498,9 @@ axs.flat[-1].set_title("basis functions")
 
 # plot country borders
 for ax in axs.flat:
-    world.boundary.plot(ax=ax, linewidth=0.6, edgecolor='white')  # or .plot(facecolor='none')
+    world.boundary.plot(
+        ax=ax, linewidth=0.6, edgecolor="white"
+    )  # or .plot(facecolor='none')
     ax.set_xlim(lon_min, lon_max)
     ax.set_ylim(lat_min, lat_max)
 
@@ -1233,21 +1515,31 @@ fpflux_2015 = get_fp_flux(2015)
 
 # %%
 year = 2015
-flux_2015 = get_flux(species="sf6", domain="europe", source="edgar-annual-total").data.flux.sel(time=slice(f"{year}-01-01", f"{year + 1}-01-01"))
+flux_2015 = get_flux(
+    species="sf6", domain="europe", source="edgar-annual-total"
+).data.flux.sel(time=slice(f"{year}-01-01", f"{year + 1}-01-01"))
 
 # %%
 flux_2015
 
 
 # %%
-def plot_experiments(trace_info, bf_obj, fpflux, flux, year, smooth_true: bool = True, mask_true: bool = True):
-    fig, axs = plt.subplots(4, 2, figsize=(15,29))
+def plot_experiments(
+    trace_info,
+    bf_obj,
+    fpflux,
+    flux,
+    year,
+    smooth_true: bool = True,
+    mask_true: bool = True,
+):
+    fig, axs = plt.subplots(4, 2, figsize=(15, 29))
     fig.suptitle(f"Experiments for {year}")
-    
+
     vmin, vmax = -39, -28
 
-#    lat_slice = slice(37, None)
-#    lon_slice = slice(-14, 25)
+    #    lat_slice = slice(37, None)
+    #    lon_slice = slice(-14, 25)
     lat_slice = slice(None, None)
     lon_slice = slice(None, None)
 
@@ -1255,7 +1547,9 @@ def plot_experiments(trace_info, bf_obj, fpflux, flux, year, smooth_true: bool =
     lon_min, lon_max = lon_slice.start, lon_slice.stop
 
     # plot prior
-    np.log(bf_obj.flux).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs.flat[0], vmin=vmin, vmax=vmax, label="prior")
+    np.log(bf_obj.flux).sel(lat=lat_slice, lon=lon_slice).plot(
+        ax=axs.flat[0], vmin=vmin, vmax=vmax, label="prior"
+    )
     axs.flat[0].set_title("prior")
 
     # plot true
@@ -1263,19 +1557,32 @@ def plot_experiments(trace_info, bf_obj, fpflux, flux, year, smooth_true: bool =
 
     if "time" in flux.dims:
         flux = flux.isel(time=0)
-    
+
     if smooth_true:
         flux_smoothed = bf_obj.interpolate(bf_obj.project(flux, normalise=True))
-        np.log(flux_smoothed * mask).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs[0, 1], vmin=vmin, vmax=vmax, label="true, smoothed to basis, masked by prior")
+        np.log(flux_smoothed * mask).sel(lat=lat_slice, lon=lon_slice).plot(
+            ax=axs[0, 1],
+            vmin=vmin,
+            vmax=vmax,
+            label="true, smoothed to basis, masked by prior",
+        )
     else:
-        np.log(flux * mask).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs.flat[1], vmin=vmin, vmax=vmax)
+        np.log(flux * mask).sel(lat=lat_slice, lon=lon_slice).plot(
+            ax=axs.flat[1], vmin=vmin, vmax=vmax
+        )
     axs.flat[1].set_title("true")
 
     for (_, title, trace), ax in zip(trace_info, axs.flat[2:]):
-        np.log(bf_obj.interpolate(trace.posterior.x.mean(["chain", "draw"]), flux=True)).sel(lat=lat_slice, lon=lon_slice).plot(ax=ax, vmin=vmin, vmax=vmax, label="no noise, no bias, pefo True, no offset")
+        np.log(
+            bf_obj.interpolate(trace.posterior.x.mean(["chain", "draw"]), flux=True)
+        ).sel(lat=lat_slice, lon=lon_slice).plot(
+            ax=ax, vmin=vmin, vmax=vmax, label="no noise, no bias, pefo True, no offset"
+        )
         ax.set_title(title)
 
-    np.log(fpflux).sel(lat=lat_slice, lon=lon_slice).plot(ax=axs.flat[-2], label="mean fp x flux")
+    np.log(fpflux).sel(lat=lat_slice, lon=lon_slice).plot(
+        ax=axs.flat[-2], label="mean fp x flux"
+    )
     axs.flat[-2].set_title("mean fp x flux")
 
     bf_obj.plot(shuffle=True, ax=axs.flat[-1])
@@ -1283,13 +1590,23 @@ def plot_experiments(trace_info, bf_obj, fpflux, flux, year, smooth_true: bool =
 
     # plot country borders
     for ax in axs.flat:
-        world.boundary.plot(ax=ax, linewidth=0.6, edgecolor='white')  # or .plot(facecolor='none')
+        world.boundary.plot(
+            ax=ax, linewidth=0.6, edgecolor="white"
+        )  # or .plot(facecolor='none')
         ax.set_xlim(lon_min, lon_max)
         ax.set_ylim(lat_min, lat_max)
 
 
 # %%
-plot_experiments(trace_info_2015, bf_obj_2015, fpflux_2015, flux_2015, 2015, smooth_true=False, mask_true=False)
+plot_experiments(
+    trace_info_2015,
+    bf_obj_2015,
+    fpflux_2015,
+    flux_2015,
+    2015,
+    smooth_true=False,
+    mask_true=False,
+)
 
 # %% [markdown]
 # #### 2016
@@ -1297,10 +1614,12 @@ plot_experiments(trace_info_2015, bf_obj_2015, fpflux_2015, flux_2015, 2015, smo
 # %%
 year = 2016
 plot_args_2016 = dict(
-    trace_info = get_trace_info(year),
-    bf_obj = bf_objs[year - 2015],
-    fpflux = get_fp_flux(year),
-    flux = get_flux(species="sf6", domain="europe", source="edgar-annual-total").data.flux.sel(time=slice(f"{year}-01-01", f"{year + 1}-01-01")),
+    trace_info=get_trace_info(year),
+    bf_obj=bf_objs[year - 2015],
+    fpflux=get_fp_flux(year),
+    flux=get_flux(
+        species="sf6", domain="europe", source="edgar-annual-total"
+    ).data.flux.sel(time=slice(f"{year}-01-01", f"{year + 1}-01-01")),
 )
 plot_experiments(**plot_args_2016)
 
@@ -1310,11 +1629,13 @@ plot_experiments(**plot_args_2016)
 # %%
 year = 2018
 plot_args_2018 = dict(
-    trace_info = get_trace_info(year),
-    bf_obj = bf_objs[year - 2015],
-    fpflux = get_fp_flux(year),
-    flux = get_flux(species="sf6", domain="europe", source="edgar-annual-total").data.flux.sel(time=slice(f"{year}-01-01", f"{year + 1}-01-01")),
-    year = year,
+    trace_info=get_trace_info(year),
+    bf_obj=bf_objs[year - 2015],
+    fpflux=get_fp_flux(year),
+    flux=get_flux(
+        species="sf6", domain="europe", source="edgar-annual-total"
+    ).data.flux.sel(time=slice(f"{year}-01-01", f"{year + 1}-01-01")),
+    year=year,
 )
 plot_experiments(**plot_args_2018)
 
@@ -1324,11 +1645,13 @@ plot_experiments(**plot_args_2018)
 # %%
 year = 2019
 plot_args_2019 = dict(
-    trace_info = get_trace_info(year),
-    bf_obj = bf_objs[year - 2015],
-    fpflux = get_fp_flux(year),
-    flux = get_flux(species="sf6", domain="europe", source="edgar-annual-total").data.flux.sel(time=slice(f"{year}-01-01", f"{year + 1}-01-01")),
-    year = year,
+    trace_info=get_trace_info(year),
+    bf_obj=bf_objs[year - 2015],
+    fpflux=get_fp_flux(year),
+    flux=get_flux(
+        species="sf6", domain="europe", source="edgar-annual-total"
+    ).data.flux.sel(time=slice(f"{year}-01-01", f"{year + 1}-01-01")),
+    year=year,
 )
 plot_experiments(**plot_args_2019)
 
@@ -1343,7 +1666,10 @@ from openghg_inversions.postprocessing.countries import Countries
 # Countries.from_file?
 
 # %%
-countries = Countries.from_file("/group/chem/acrg/LPDM/countries/country_EUROPE_EEZ_PARIS_gapfilled.nc", country_code="alpha3")
+countries = Countries.from_file(
+    "/group/chem/acrg/LPDM/countries/country_EUROPE_EEZ_PARIS_gapfilled.nc",
+    country_code="alpha3",
+)
 
 # %%
 # countries.get_x_to_country_mat??
@@ -1358,14 +1684,21 @@ print(sf6_mm)
 flux = get_flux(species="sf6", domain="europe", source="edgar-annual-total").data.flux
 
 _, flux_aligned = xr.align(countries.area_grid, flux, join="override")
-true_country_totals = sparse_xr_dot(countries.matrix, countries.area_grid * flux_aligned).compute()
+true_country_totals = sparse_xr_dot(
+    countries.matrix, countries.area_grid * flux_aligned
+).compute()
 
 # %%
 flux * 1e-3 / sf6_mm * (365.25 * 24 * 3600)
 
 # %%
 # column 1 is "OCEAN", which includes part of North America...
-true_country_df = (true_country_totals / sf6_mm * 1e-3 * (365.25 * 24 * 3600)).to_series().unstack().T.iloc[:, 1:]
+true_country_df = (
+    (true_country_totals / sf6_mm * 1e-3 * (365.25 * 24 * 3600))
+    .to_series()
+    .unstack()
+    .T.iloc[:, 1:]
+)
 
 # %%
 true_country_df
@@ -1377,7 +1710,11 @@ traces = [get_trace_info(year) for year in range(2015, 2025)]
 post_flux_dict = defaultdict(list)
 for trace, year in zip(traces, range(2015, 2025)):
     for ti in trace:
-        post_flux_dict[ti.exp_num].append(ti.trace.posterior.x.mean(["draw", "chain"]).expand_dims({"time": [f"{year}-01-01"]}))
+        post_flux_dict[ti.exp_num].append(
+            ti.trace.posterior.x.mean(["draw", "chain"]).expand_dims(
+                {"time": [f"{year}-01-01"]}
+            )
+        )
 
 # %%
 for bfo in bf_objs:
@@ -1387,7 +1724,13 @@ for bfo in bf_objs:
 # bf_objs[0].interpolate?
 
 # %%
-post_flux_concat = {k : xr.concat([bfo.interpolate(ds * bfo.flux.squeeze("time")) for ds, bfo in zip(v, bf_objs)], dim="time") for k, v in post_flux_dict.items()}
+post_flux_concat = {
+    k: xr.concat(
+        [bfo.interpolate(ds * bfo.flux.squeeze("time")) for ds, bfo in zip(v, bf_objs)],
+        dim="time",
+    )
+    for k, v in post_flux_dict.items()
+}
 
 # %%
 post_flux_concat["97"]
@@ -1396,10 +1739,19 @@ post_flux_concat["97"]
 post_country_totals = {}
 for k, v in post_flux_concat.items():
     _, flux_aligned = xr.align(countries.area_grid, v, join="override")
-    post_country_totals[k] = sparse_xr_dot(countries.matrix, countries.area_grid * flux_aligned).compute()
+    post_country_totals[k] = sparse_xr_dot(
+        countries.matrix, countries.area_grid * flux_aligned
+    ).compute()
 
 # %%
-post_country_dfs = {k: (v / sf6_mm * 1e-3 * (365.25 * 24 * 3600)).as_numpy().to_series().unstack().T.iloc[:, 1:] for k, v in post_country_totals.items()}
+post_country_dfs = {
+    k: (v / sf6_mm * 1e-3 * (365.25 * 24 * 3600))
+    .as_numpy()
+    .to_series()
+    .unstack()
+    .T.iloc[:, 1:]
+    for k, v in post_country_totals.items()
+}
 
 # %%
 post_country_dfs.keys()
@@ -1417,7 +1769,7 @@ print(true_country_df["DEU"].index)
 print(post_country_dfs["39"]["DEU"].index)
 
 # %%
-fig, ax = plt.subplots(figsize=(15,7))
+fig, ax = plt.subplots(figsize=(15, 7))
 
 for pcdf, title in zip(post_country_dfs.values(), titles):
     pcdf["DEU"].plot(ax=ax, label=title)
@@ -1433,7 +1785,9 @@ ax.set_title("Germany country totals")
 # %%
 
 # %%
-country_ds = xr.open_dataset("/group/chem/acrg/LPDM/countries/country_EUROPE_EEZ_PARIS_gapfilled.nc")
+country_ds = xr.open_dataset(
+    "/group/chem/acrg/LPDM/countries/country_EUROPE_EEZ_PARIS_gapfilled.nc"
+)
 country_ds
 
 # %%
@@ -1444,7 +1798,9 @@ lat_min = country_ds.lat.min().values
 lat_max = country_ds.lat.max().values
 
 (country_ds.country == 0).plot(ax=ax)
-world.boundary.plot(ax=ax, linewidth=0.6, edgecolor='white')  # or .plot(facecolor='none')
+world.boundary.plot(
+    ax=ax, linewidth=0.6, edgecolor="white"
+)  # or .plot(facecolor='none')
 ax.set_xlim(lon_min, lon_max)
 ax.set_ylim(lat_min, lat_max)
 

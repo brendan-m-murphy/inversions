@@ -33,7 +33,9 @@ def find_repo_root(start: Path | None = None) -> Path:
     return Path.cwd().resolve()
 
 
-def run(cmd: list[str], capture: bool = False, check: bool = True) -> subprocess.CompletedProcess:
+def run(
+    cmd: list[str], capture: bool = False, check: bool = True
+) -> subprocess.CompletedProcess:
     if capture:
         return subprocess.run(cmd, text=True, capture_output=True, check=check)
     return subprocess.run(cmd, check=check)
@@ -58,7 +60,10 @@ def ensure_ipykernel_installed(venv_python: str) -> None:
             file=sys.stderr,
         )
         run([venv_python, "-m", "pip", "install", "--upgrade", "pip"], check=True)
-        run([venv_python, "-m", "pip", "install", "ipykernel", "jupyter_client"], check=True)
+        run(
+            [venv_python, "-m", "pip", "install", "ipykernel", "jupyter_client"],
+            check=True,
+        )
 
 
 def kernelspec_exists(name: str) -> bool:
@@ -90,7 +95,9 @@ def install_kernel(
     force: bool = False,
 ) -> int:
     repo_root = find_repo_root()
-    notebooks_dir = Path(notebooks_path) if notebooks_path else (repo_root / "notebooks")
+    notebooks_dir = (
+        Path(notebooks_path) if notebooks_path else (repo_root / "notebooks")
+    )
 
     venv_python = python_for_venv(venv)
     print(f"Using Python: {venv_python}")
@@ -101,9 +108,21 @@ def install_kernel(
         print(f"Kernel '{name}' already exists. Use --force to reinstall/overwrite.")
         return 0
 
-    print(f"Installing kernel '{name}' (display name: {display}) using {venv_python} ...")
+    print(
+        f"Installing kernel '{name}' (display name: {display}) using {venv_python} ..."
+    )
     run(
-        [venv_python, "-m", "ipykernel", "install", "--user", "--name", name, "--display-name", display],
+        [
+            venv_python,
+            "-m",
+            "ipykernel",
+            "install",
+            "--user",
+            "--name",
+            name,
+            "--display-name",
+            display,
+        ],
         check=True,
     )
     print("Kernel installed.")
@@ -126,7 +145,9 @@ def install_kernel(
                     nb.setdefault("metadata", {})["kernelspec"] = {
                         "name": name,
                         "display_name": display,
-                        "language": nb.get("metadata", {}).get("kernelspec", {}).get("language", "python"),
+                        "language": nb.get("metadata", {})
+                        .get("kernelspec", {})
+                        .get("language", "python"),
                     }
                     nbformat.write(nb, nb_path)
                 else:
@@ -135,7 +156,9 @@ def install_kernel(
                     data.setdefault("metadata", {})["kernelspec"] = {
                         "name": name,
                         "display_name": display,
-                        "language": data.get("metadata", {}).get("kernelspec", {}).get("language", "python"),
+                        "language": data.get("metadata", {})
+                        .get("kernelspec", {})
+                        .get("language", "python"),
                     }
                     with open(nb_path, "w", encoding="utf8") as fh:
                         json.dump(data, fh, indent=1)
@@ -151,11 +174,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="inversions")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_install = sub.add_parser("install_kernel", help="Install an IPython kernel for the project's venv")
-    p_install.add_argument(
-        "--venv", help="Path to a Python virtualenv (default: the current interpreter / uv .venv)"
+    p_install = sub.add_parser(
+        "install_kernel", help="Install an IPython kernel for the project's venv"
     )
-    p_install.add_argument("--name", default="inversions", help="Kernel name (default: inversions)")
+    p_install.add_argument(
+        "--venv",
+        help="Path to a Python virtualenv (default: the current interpreter / uv .venv)",
+    )
+    p_install.add_argument(
+        "--name", default="inversions", help="Kernel name (default: inversions)"
+    )
     p_install.add_argument(
         "--display",
         default="Python (inversions)",
@@ -166,9 +194,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Update notebooks/ .ipynb files to point to the new kernel",
     )
-    p_install.add_argument("--notebooks", help="Directory with notebooks (default: ./notebooks)")
     p_install.add_argument(
-        "--force", action="store_true", help="Force reinstall even if the kernel already exists"
+        "--notebooks", help="Directory with notebooks (default: ./notebooks)"
+    )
+    p_install.add_argument(
+        "--force",
+        action="store_true",
+        help="Force reinstall even if the kernel already exists",
     )
     return parser
 

@@ -11,6 +11,7 @@
 #     language: python
 #     name: python3
 # ---
+
 # %% [markdown]
 # ## Imports
 
@@ -134,7 +135,10 @@ njobs = len(ini_files)
 
 # %%
 func = partial(
-    create_and_save_merged_data, merged_data_dir=data_path, output_name=output_name, chunks={"time": 400}
+    create_and_save_merged_data,
+    merged_data_dir=data_path,
+    output_name=output_name,
+    chunks={"time": 400},
 )
 
 # %%
