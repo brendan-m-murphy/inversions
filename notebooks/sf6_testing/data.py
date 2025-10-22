@@ -11,6 +11,34 @@
 #     language: python
 #     name: python3
 # ---
+# %% [markdown]
+# ## Imports
+
+# %%
+from functools import partial
+from pathlib import Path
+from openghg.util import split_function_inputs
+import xarray as xr
+from dask_jobqueue import SLURMCluster
+from dask.distributed import Client
+import zipfile
+import zarr
+import re
+
+from inversions.dask_helpers import zip_on_done
+
+# replacement for %run
+from inversions.data_functions import (
+    read_ini,
+    data_processing,
+    fp_all_to_datatree,
+    filter_data_vars,
+    store_data_var,
+    create_merged_data,
+    create_and_save_merged_data,
+    search_merged_data,
+    load_merged_data,
+)
 
 # %% [markdown]
 # # Data for SF6 tests
@@ -20,19 +48,16 @@
 # It would be helpful to save the data in a state where I could change the number of basis functions or filtering.
 
 # %%
-from pathlib import Path
 
 sf6_path = Path("/group/chem/acrg/PARIS_inversions/sf6/")
 sf6_base_nid2025_path = sf6_path / "RHIME_NAME_EUROPE_FLAT_ConfigNID2025_sf6_yearly"
-# ini_files = !ls {sf6_base_nid2025_path / "*.ini"}
+ini_files = [p.name for p in sf6_base_nid2025_path.glob("*.ini")]
 # get 2015-2024
 ini_files = ini_files[2:-1]
 
 # %%
 ini_files
 
-# %%
-# %run inversions_experimental_code/data_functions.py
 
 # %% [markdown]
 # ## Test for MultiObs and MultiFootprint with ModelScenario
@@ -40,25 +65,13 @@ ini_files
 # Alignment failed when trying to pass MultiObs and MultiFootprint directly to ModelScenario, so I resorted to using a loop over sites.
 
 # %%
-from openghg_inversions.hbmcmc.run_hbmcmc import hbmcmc_extract_param
-from openghg.util import split_function_inputs
 
 params = read_ini(ini_files[0])
-data_params, _ =  split_function_inputs(params, data_processing)
+data_params, _ = split_function_inputs(params, data_processing)
 
-# %%
-data_params
-
-# %%
 fp_all = data_processing(**data_params)
 
-# %%
-fp_all.keys()
-
-# %%
 dt = fp_all_to_datatree(fp_all, rechunk=False)
-
-# %%
 dt
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
@@ -77,23 +90,6 @@ dt
 # - obs and obs uncertainties
 # - release lat/lon
 
-# %%
-from collections.abc import Callable
-import xarray as xr
-
-# function for pruning data vars...
-def filter_data_vars(ds: xr.Dataset, cond: Callable[[str], bool]) -> xr.Dataset:
-    keep_dvs = [dv for dv in ds.data_vars if cond(str(dv))]
-    return ds[keep_dvs]
-
-
-# %%
-def store_data_var(dv: str) -> bool:
-    return dv not in ("fp", "mf_mod", "bc_mod") and "particle" not in dv
-
-
-# %%
-dt.map_over_datasets(filter_data_vars, store_data_var)
 
 # %%
 # test new helper function
@@ -112,18 +108,14 @@ work_path = Path("/user/work/bm13805/")
 data_path = work_path / "sf6_model_testing_data"
 output_name = "4h-no-basis-no-filt"
 
-# %%
-dt.nbytes / 1024**3
 
 # %%
-from dask_jobqueue import SLURMCluster
-from dask.distributed import Client
 
 cluster = SLURMCluster(
     processes=4,
     cores=8,
-    memory='40GB',
-    walltime='01:00:00',
+    memory="40GB",
+    walltime="01:00:00",
     account="chem007981",
 )
 client = Client(cluster)
@@ -141,76 +133,14 @@ print(cluster.job_script())
 njobs = len(ini_files)
 
 # %%
-func = partial(create_and_save_merged_data, merged_data_dir=data_path, output_name=output_name, chunks={"time": 400})
+func = partial(
+    create_and_save_merged_data, merged_data_dir=data_path, output_name=output_name, chunks={"time": 400}
+)
 
 # %%
 cluster.scale(jobs=njobs)
-#cluster.scale(memory="40GB")
-#cluster.adapt(minimum=0, maximum=10)
-
-# %%
-# zip on done, in the background
-import concurrent.futures
-import zipfile
-import tempfile
-import os
-from pathlib import Path
-import shutil
-from typing import Any
-
-from dask.distributed import Future as DaskFuture
-
-
-def zip_dir_no_compress(store_dir: str | Path, zip_path: str | Path, remove_source: bool = False) -> None:
-    store_dir = Path(store_dir)
-    zip_path = Path(zip_path)
-
-    if not store_dir.is_dir():
-        raise FileNotFoundError(f"Store directory not found: {store_dir}")
-
-    # create temp file in same directory as zip_path (use str(...) for tempfile)
-    fd, tmp_name = tempfile.mkstemp(suffix='.zip', dir=str(zip_path.parent))
-    os.close(fd)
-
-    try:
-        with zipfile.ZipFile(tmp_name, mode='w', compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
-            for p in sorted(store_dir.rglob('*')):
-                if p.is_file():
-                    zf.write(p, arcname=p.relative_to(store_dir))
-
-        # quick integrity check
-        with zipfile.ZipFile(tmp_name, 'r') as zf:
-            bad = zf.testzip()
-            if bad is not None:
-                raise RuntimeError(f"Corrupt file in zip: {bad}")
-
-        # atomic replace (Path is fine here on modern Python)
-        os.replace(tmp_name, str(zip_path))
-
-        if remove_source:
-            shutil.rmtree(store_dir)
-    except Exception:
-        if os.path.exists(tmp_name):
-            try:
-                os.remove(tmp_name)
-            except Exception:
-                pass
-        raise
-        
-executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-zip_dir = partial(zip_dir_no_compress, remove_source=True)
-
-def on_done(future: DaskFuture) -> None:
-    try:
-        store_dir = future.result()
-    except Exception as exc:
-        print("Task failed:", exc)
-    else:
-        store_dir = Path(store_dir)
-        zip_path = store_dir.with_suffix(store_dir.suffix + ".zip")
-        
-        # Submit heavy I/O (zipping) to a background thread pool
-        executor.submit(zip_dir, store_dir, zip_path)
+# cluster.scale(memory="40GB")
+# cluster.adapt(minimum=0, maximum=10)
 
 
 # %%
@@ -218,11 +148,11 @@ futures = client.map(func, ini_files)
 
 # %%
 for f in futures:
-    f.add_done_callback(on_done)
+    f.add_done_callback(zip_on_done)
 
 # %%
 for ini_file, future in zip(ini_files, futures):
-#    future.cancel()
+    #    future.cancel()
     print(ini_file.split("/")[-1], future)
 
 # %%
@@ -230,25 +160,24 @@ for ini_file, future in zip(ini_files, futures):
 
 # %%
 # #to_delete = !ls {data_path} | grep -E "sf6.*zip"
-#for f in to_delete:
+# for f in to_delete:
 # #    !rm {data_path / f}
 
 # %%
-# results = !ls {data_path} | grep -E "sf6.*zip"
+results = [p.name for p in data_path.glob("sf6*zip")]
 
 # %%
-import zarr
-import zipfile
 
 with zipfile.ZipFile(data_path / results[0]) as zf:
     for x in zf.infolist():
         print(x)
-#dt_2015 = xr.open_datatree(data_path / "sf6_2015-01-01_4h-no-basis-no-filt_merged-data.zarr.zip", engine="zarr")
+# dt_2015 = xr.open_datatree(data_path / "sf6_2015-01-01_4h-no-basis-no-filt_merged-data.zarr.zip", engine="zarr")
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Test for saving and loading to/from zarr ZipStore
 #
 # ...I needed to pass `engine="zarr"` to `xr.open_datatree`
+
 
 # %%
 # !rm -rf {data_path/"test.zarr.zip"}
@@ -257,6 +186,8 @@ def test_zip_store(ini_file):
     dt = create_merged_data(params0)
     with zarr.ZipStore(data_path / "test.zarr.zip", mode="w") as store:
         dt.drop_nodes("scenario").to_zarr(store, mode="w")
+
+
 future = client.submit(test_zip_store, ini_files[0])
 
 # %%
@@ -290,9 +221,10 @@ dt.scenario.TAC.fp_x_flux.chunksizes
 # We need to specify engine="zarr" and chunks={}, plus look up the name we created, so it will be useful to have a helper function to do this.
 
 # %%
-import re
 
-merged_data_name_pat = re.compile(r"(?P<species>[a-zA-Z0-9]+)_(?P<start_date>[\d-]+)_(?P<output_name>.+)_merged-data")
+merged_data_name_pat = re.compile(
+    r"(?P<species>[a-zA-Z0-9]+)_(?P<start_date>[\d-]+)_(?P<output_name>.+)_merged-data"
+)
 
 # %%
 print(results[0])
@@ -352,11 +284,11 @@ xr.testing.assert_isomorphic(dt_2015_1, dt_2015_2)
 # Okay so we can delete the unzipped data...
 
 # %%
-# files_raw = !ls -lsht {data_path}
+files_raw = [p.name for p in data_path.iterdir()]
 files = [fr.strip().split()[-1] for fr in files_raw]
 files
 
-#for f in files[1:4]:
+# for f in files[1:4]:
 # #    !rm -rf {data_path/f}
 
 # %%

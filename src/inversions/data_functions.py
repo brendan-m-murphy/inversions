@@ -272,7 +272,7 @@ def data_processing(
     footprint_store: str | list[str] | None = None,
     emissions_store: str | None = None,
     add_averaging_error: bool = True,
-) -> xr.Dataset:
+) -> dict[str, xr.Dataset | dict[str, xr.Dataset]]:
     sites = [site.upper() for site in sites]
 
     # Convert 'None' args to list
