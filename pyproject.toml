@@ -55,3 +55,7 @@ default_formats = "ipynb,py:percent"
 [tool.uv.sources]
 openghg-inversions = { git = "https://github.com/openghg/openghg_inversions.git" }
 fluxy = { git = "https://github.com/openghg/fluxy.git" }
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
