@@ -12,6 +12,7 @@ dependencies = [
     "distributed>=2025.10.0",
     "flox>=0.10.7",
     "fluxy",
+    "iris>=1.0.7",
     "jupytext>=1.17.3",
     "matplotlib>=3.10.7",
     "nbstripout>=0.8.1",

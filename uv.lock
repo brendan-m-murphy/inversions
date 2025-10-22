@@ -946,6 +946,7 @@ dependencies = [
     { name = "distributed" },
     { name = "flox" },
     { name = "fluxy" },
+    { name = "iris" },
     { name = "jupytext" },
     { name = "matplotlib" },
     { name = "nbstripout" },
@@ -981,6 +982,7 @@ requires-dist = [
     { name = "distributed", specifier = ">=2025.10.0" },
     { name = "flox", specifier = ">=0.10.7" },
     { name = "fluxy", git = "https://github.com/openghg/fluxy.git" },
+    { name = "iris", specifier = ">=1.0.7" },
     { name = "jupytext", specifier = ">=1.17.3" },
     { name = "matplotlib", specifier = ">=3.10.7" },
     { name = "nbstripout", specifier = ">=0.8.1" },
@@ -1057,6 +1059,14 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3e/48/d3dbac45c2814cb73812f98dd6b38bbcc957a4e7bb31d6ea9c03bf94ed87/ipywidgets-8.1.7.tar.gz", hash = "sha256:15f1ac050b9ccbefd45dccfbb2ef6bed0029d8278682d569d71b8dd96bee0376", size = 116721, upload-time = "2025-05-05T12:42:03.489Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/58/6a/9166369a2f092bd286d24e6307de555d63616e8ddb373ebad2b5635ca4cd/ipywidgets-8.1.7-py3-none-any.whl", hash = "sha256:764f2602d25471c213919b8a1997df04bef869251db4ca8efba1b76b1bd9f7bb", size = 139806, upload-time = "2025-05-05T12:41:56.833Z" },
+]
+
+[[package]]
+name = "iris"
+version = "1.0.7"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/72/9368abe71fd25383a94890ccd80f603dab69c8dbe2af89c2fd4342f5df7a/iris-1.0.7-py2.py3-none-any.whl", hash = "sha256:69f0542616f237569c7319b1eab946c94c3b48a9697c732ab4b4b5ecb55da569", size = 6153, upload-time = "2020-02-07T15:51:26.847Z" },
 ]
 
 [[package]]
