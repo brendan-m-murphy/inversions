@@ -12,7 +12,9 @@ dependencies = [
     "distributed>=2025.10.0",
     "flox>=0.10.7",
     "fluxy",
+    "ipykernel>=7.1.0",
     "iris>=1.0.7",
+    "jupyterlab>=4.4.10",
     "jupytext>=1.17.3",
     "matplotlib>=3.10.7",
     "nbstripout>=0.8.1",
@@ -25,6 +27,7 @@ dependencies = [
     "pymc>=5.25.1",
     "scipy>=1.16.2",
     "sparse>=0.17.0",
+    "tabulate>=0.9.0",
     "tfp-nightly>=0.26.0.dev20251015",
     "xarray>=2025.6",
 ]

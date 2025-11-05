@@ -83,7 +83,11 @@ class BasisFunctions:
         self.basis_flat = (
             basis_flat.isel(time=0) if "time" in basis_flat.dims else basis_flat
         )
-        self.flux = flux
+        if "time" in flux.dims and flux.sizes["time"] == 1:
+            self.flux = flux.squeeze("time", drop=True)
+        else:
+            self.flux = flux
+
         self.basis_matrix = get_xr_dummies(basis_flat, cat_dim="region")
 
         if chunks is not None:
@@ -101,10 +105,10 @@ class BasisFunctions:
             self.basis_matrix, self.flux**2, dim=["lat", "lon"]
         )
 
-        if "time" in self.projection_weightings.dims:
-            self.projection_weightings = self.projection_weightings.squeeze(
-                "time", drop=True
-            )
+        # if "time" in self.projection_weightings.dims:
+        #     self.projection_weightings = self.projection_weightings.squeeze(
+        #         "time", drop=True
+        #     )
 
         # make factors to rescale prior uncertainty
         # normalise by mean of flux to avoid floating point issues
@@ -116,10 +120,10 @@ class BasisFunctions:
             / (flux_scaling**2 * self.projection_weightings) ** 2
         )
 
-        if "time" in self.uncertainty_rescaling.dims:
-            self.uncertainty_rescaling = self.uncertainty_rescaling.squeeze(
-                "time", drop=True
-            )
+        # if "time" in self.uncertainty_rescaling.dims:
+        #     self.uncertainty_rescaling = self.uncertainty_rescaling.squeeze(
+        #         "time", drop=True
+        #     )
 
         # make aggregation error factor; the aggregation error is then
         # prior_sigma * np.sqrt((fp_x_flux)**2 @ agg_err_factor)
@@ -129,7 +133,7 @@ class BasisFunctions:
             * (flux_scaling * self.flux) ** 2
             / self.interpolate(flux_scaling**2 * self.projection_weightings)
             + self.interpolate(self.uncertainty_rescaling)
-        ).squeeze("time", drop=True)
+        )  #.squeeze("time", drop=True)
 
     def interpolate(self, data, flux: bool = False):
         """Map from regions to lat/lon."""
@@ -161,13 +165,13 @@ class BasisFunctions:
 
     def plot(self, shuffle=False, **kwargs):
         if not shuffle:
-            self.basis_flat.plot(**kwargs)
+            return self.basis_flat.plot(**kwargs)
         else:
             bf_shuf = self.basis_flat.copy()
             bf_shuf.values = self.labels_shuffled[
                 self.basis_flat.values.astype(int) - 1
             ]
-            bf_shuf.plot(**kwargs)
+            return bf_shuf.plot(**kwargs)
 
 
 def test_setup():

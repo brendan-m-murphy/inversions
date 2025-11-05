@@ -1,0 +1,1327 @@
+#+title: Greedy Basis Tests
+
+#+property: header-args:jupyter-python :kernel inversions :session greedy_basis_tests :async yes :export both
+
+#+begin_src jupyter-python
+%load_ext autoreload
+%autoreload 2
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import xarray as xr
+#+end_src
+
+#+RESULTS:
+
+The goal of this notebook is to test the greedy algorithms for creating basis functions using axis-parallel or "inertial" partitioning.
+
+* Examples with real data
+
+** Loading data
+
+#+begin_src jupyter-python
+merged_data = xr.open_dataset("~/Documents/openghg_inversions/tests/data/merged_data_test_tac_combined_scenario_v14.nc")
+mean_fp_x_flux = merged_data.fp_x_flux.mean("time").squeeze("site")
+
+weight_arr = mean_fp_x_flux.values
+lat_coord = mean_fp_x_flux.lat.values
+lon_coord = mean_fp_x_flux.lon.values
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+land_sea_mask = xr.open_dataset("~/Documents/openghg_inversions/openghg_inversions/basis/algorithms/country-EUROPE-UKMO-landsea-2023.nc")
+print(land_sea_mask)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+<xarray.Dataset> Size: 922kB
+Dimensions:       (lat: 293, lon: 391, ncountries: 2)
+Coordinates:
+  ,* lat           (lat) float64 2kB 10.73 10.96 11.2 11.43 ... 78.59 78.82 79.06
+  ,* lon           (lon) float64 3kB -97.9 -97.55 -97.2 ... 38.68 39.03 39.38
+  ,* ncountries    (ncountries) int64 16B 0 1
+Data variables:
+    country       (lat, lon) float64 917kB ...
+    name          (ncountries) <U4 32B ...
+    country_code  (ncountries) int64 16B ...
+Attributes:
+    Created by:    Alistair J. Manning
+    Processed by:  Eric Saboya
+    date created:  2023-08-09
+    Notes:         UKMO country mask version April 2022
+    domain:        EUROPE
+#+end_example
+
+#+begin_src jupyter-python
+countries_ds = xr.open_dataset("~/Documents/openghg_inversions/tests/data/country_EUROPE.nc")
+print(countries_ds)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+<xarray.Dataset> Size: 941kB
+Dimensions:  (lat: 293, lon: 391, ncountries: 104)
+Coordinates:
+  ,* lat      (lat) float32 1kB 10.73 10.96 11.2 11.43 ... 78.59 78.82 79.06
+  ,* lon      (lon) float32 2kB -97.9 -97.55 -97.2 -96.84 ... 38.68 39.03 39.38
+Dimensions without coordinates: ncountries
+Data variables:
+    country  (lat, lon) float64 917kB ...
+    name     (ncountries) <U52 22kB ...
+Attributes:
+    title:     Grid of country extent across EUROPE domain
+    author:    File created by ag12733
+    database:  Natural_Earth database with scale 1:50m used to create this fi...
+    extent:    Domain beween latitude 10.7290000916 - 79.0569992065, longitud...
+#+end_example
+
+#+begin_src jupyter-python
+from openghg_inversions.postprocessing.countries import Countries
+
+countries = Countries(countries_ds, country_code="alpha3")
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+country_coord = countries.matrix.country
+country_labels = xr.DataArray(np.arange(len(country_coord)), dims=["country"], coords=[country_coord])
+countries_flat = countries.matrix @ country_labels
+print(country_labels)
+print(countries_flat)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+<xarray.DataArray (country: 104)> Size: 832B
+array([  0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,
+        13,  14,  15,  16,  17,  18,  19,  20,  21,  22,  23,  24,  25,
+        26,  27,  28,  29,  30,  31,  32,  33,  34,  35,  36,  37,  38,
+        39,  40,  41,  42,  43,  44,  45,  46,  47,  48,  49,  50,  51,
+        52,  53,  54,  55,  56,  57,  58,  59,  60,  61,  62,  63,  64,
+        65,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,  77,
+        78,  79,  80,  81,  82,  83,  84,  85,  86,  87,  88,  89,  90,
+        91,  92,  93,  94,  95,  96,  97,  98,  99, 100, 101, 102, 103])
+Coordinates:
+  ,* country  (country) <U9 4kB 'OCEAN' 'VEN' 'VGB' 'PRI' ... 'AND' 'DZA' 'ALB'
+<xarray.DataArray (lat: 293, lon: 391)> Size: 917kB
+array([[ 0.,  0.,  0., ..., 69., 69., 69.],
+       [ 0.,  0.,  0., ..., 69., 69., 69.],
+       [ 0.,  0.,  0., ..., 69., 69., 69.],
+       ...,
+       [89., 89., 89., ...,  0.,  0.,  0.],
+       [ 0.,  0.,  0., ...,  0.,  0.,  0.],
+       [ 0.,  0.,  0., ...,  0.,  0.,  0.]], shape=(293, 391))
+Coordinates:
+  ,* lat      (lat) float32 1kB 10.73 10.96 11.2 11.43 ... 78.59 78.82 79.06
+  ,* lon      (lon) float32 2kB -97.9 -97.55 -97.2 -96.84 ... 38.68 39.03 39.38
+#+end_example
+
+#+begin_src jupyter-python
+print(sorted(map(str, country_labels.country.values)))
+#+end_src
+
+#+RESULTS:
+: ['AIA', 'ALB', 'AND', 'AUT', 'BEL', 'BEN', 'BFA', 'BGR', 'BHS', 'BIH', 'BLR', 'BLZ', 'BRB', 'CAF', 'CAN', 'CHE', 'CMR', 'COL', 'CPV', 'CRI', 'CUB', 'CYP', 'CZE', 'DEU', 'DMA', 'DNK', 'DOM', 'DZA', 'EGY', 'ERI', 'ESP', 'EST', 'ETH', 'FIN', 'FRA', 'FRO', 'GBR', 'GHA', 'GIN', 'GMB', 'GNB', 'GRC', 'GRD', 'GRL', 'GTM', 'HND', 'HRV', 'HTI', 'HUN', 'IMN', 'IRL', 'IRQ', 'ISL', 'ISR', 'ITA', 'JAM', 'JOR', 'KOSOVO', 'LBN', 'LBY', 'LCA', 'LTU', 'LUX', 'LVA', 'MAR', 'MDA', 'MEX', 'MKD', 'MLI', 'MNE', 'MRT', 'N. CYPRUS', 'NER', 'NGA', 'NIC', 'NLD', 'NOR', 'OCEAN', 'POL', 'PRI', 'PRT', 'PSE', 'ROU', 'RUS', 'SAU', 'SDN', 'SEN', 'SLV', 'SRB', 'SSD', 'SVK', 'SVN', 'SWE', 'SYR', 'TCD', 'TGO', 'TTO', 'TUN', 'TUR', 'UKR', 'USA', 'VEN', 'VGB', 'WSM']
+
+InTEM outer regions:
+
+#+begin_src shell
+ls /Users/bm13805/documents/openghg_inversions/openghg_inversions/basis
+#+end_src
+
+#+RESULTS:
+| __init__.py                         |
+| __pycache__                         |
+| _functions.py                       |
+| _helpers.py                         |
+| _wrapper.py                         |
+| algorithms                          |
+| outer_region_definition_EASTASIA.nc |
+| outer_region_definition_EUROPE.nc   |
+
+#+begin_src jupyter-python
+outer_regions = xr.open_dataset("/Users/bm13805/documents/openghg_inversions/openghg_inversions/basis/outer_region_definition_EUROPE.nc")
+print(outer_regions)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+<xarray.Dataset> Size: 922kB
+Dimensions:  (lat: 293, lon: 391)
+Coordinates:
+  ,* lat      (lat) float64 2kB 10.73 10.96 11.2 11.43 ... 78.59 78.82 79.06
+  ,* lon      (lon) float64 3kB -97.9 -97.55 -97.2 -96.84 ... 38.68 39.03 39.38
+Data variables:
+    region   (lat, lon) int64 917kB ...
+Attributes:
+    info:          InTEM outer region definition
+    created_from:  Created from file EUextN_Domain_map.txt
+    created_by:    aramsden
+    created_on:    2024-01-31 10:10:39.930861+00:00
+#+end_example
+
+Let's look at these region maps and the mean fp x flux.
+
+#+begin_src jupyter-python
+from inversions.plotting import plot_country_boundaries
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+fig, ax = plt.subplots()
+
+land_sea_mask.country.plot(ax=ax)
+plot_country_boundaries(ax)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/933c2798b07eb141cddea8083b91c89e6b266ed1.png]]
+
+
+#+begin_src jupyter-python
+fig, ax = plt.subplots()
+
+countries_ds.country.plot(ax=ax)
+plot_country_boundaries(ax)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/72e3f83a60675782306b63a5149145a985c2f5ab.png]]
+
+
+#+begin_src jupyter-python
+fig, ax = plt.subplots()
+
+outer_regions.region.plot(ax=ax)
+plot_country_boundaries(ax)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 545
+[[file:./.ob-jupyter/0b8c5d3994297daef9dbb8de8208178c37eeb1dc.png]]
+:END:
+
+
+Finally, we'll plot the mean footprint times flux (on a log scale).
+
+#+begin_src jupyter-python
+fig, ax = plt.subplots()
+
+np.log(mean_fp_x_flux).plot(ax=ax)
+plot_country_boundaries(ax)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/132a5bb9fb07f49d837aa3304ee907e090ce61d8.png]]
+
+** Masking regions
+
+#+begin_src jupyter-python
+from inversions.basis_algorithms import node_list_from_mask, partition_data_array, partition_remainder
+#+end_src
+
+#+RESULTS:
+
+We can make a list of nodes corresponding to land and to sea using the land/sea mask. If we convert this to a DataArray,
+it is the same as the ~country~ variables of the land/sea mask.
+
+Note: "node" here just means grid cell.
+
+#+begin_src jupyter-python
+land_sea_partition = [node_list_from_mask(land_sea_mask.country == i) for i in range(land_sea_mask.sizes["ncountries"])]
+land_sea_part_da = partition_data_array(land_sea_partition, land_sea_mask.lat.values, land_sea_mask.lon.values)
+
+fig, ax = plt.subplots()
+
+land_sea_part_da.plot(ax=ax)
+plot_country_boundaries(ax)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/fdb0fbad784e03983db43b198558b0dbb8805dda.png]]
+
+
+A more interesting option is to select a few countries whose totals we're interested in, along with the ocean.
+
+First we create node lists from a selection of regions:
+
+#+begin_src jupyter-python
+paris_country_list = ["OCEAN", "GBR", "DEU", "FRA", "ITA", "IRL", "BEL", "ESP", "NLD"]
+paris_partition = [node_list_from_mask(countries_flat == country_labels.sel(country=c)) for c in paris_country_list]
+#+end_src
+
+#+RESULTS:
+
+Now we need to make a region with any missing nodes:
+
+#+begin_src jupyter-python
+remainder = partition_remainder(paris_partition, nx=countries_flat.sizes["lat"], ny=countries_flat.sizes["lon"])
+paris_partition.append(remainder)
+#+end_src
+
+#+RESULTS:
+
+Now we can plot the result:
+
+#+begin_src jupyter-python
+paris_part_da = partition_data_array(paris_partition, countries_flat.lat.values, countries_flat.lon.values)
+
+fig, ax = plt.subplots()
+
+paris_part_da.plot(ax=ax)
+plot_country_boundaries(ax)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/7f59c8dab0888ece395e7e39f5ef0a69a1651ebd.png]]
+
+Everything in yellow is one region, but this will be split by the basis algorithms.
+
+
+
+
+** Axis parallel partitions
+
+The axis-parallel partitioning takes an initial partition and repeatedly subdivides the regions until
+we have a target number of regions.
+
+The algorithm is "greedy" in that the next region split is the one with the highest "weight". This weight could
+be the number of nodes in the region, or it could be the total value of a map like "mean footprint times flux".
+
+By default, splits are "balanced", so that each region in the split has equal weight. If ~balanced=False~, then
+regions are split so that they have an equal number of nodes.
+
+In the axis-parallel algorithm, splits are parallel to the x or y axis; the direction is chosen so that the longer
+edge is split. (This doesn't always work well with the balanced option, since the weight in the region might not be uniformly
+distributed.) Also, the length is measured assuming x and y coordinates have equal spacing, which isn't true on lat/lon grids.
+
+#+begin_src jupyter-python
+from inversions.basis_algorithms import axis_parallel_partitioning, NodeList
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+print(axis_parallel_partitioning.__doc__)
+#+end_src
+
+#+RESULTS:
+: None
+
+To plot the basis functions, we'll use the ~BasisFunctions~ class, which shuffles the region labels to make the basis regions easier
+to see.
+#+begin_src jupyter-python
+from inversions.basis_functions import BasisFunctions
+#+end_src
+
+#+RESULTS:
+
+We'll make a helper function to make ~BasisFunctions~ objects from our partitions since this involves a few steps.
+
+#+begin_src jupyter-python
+def basis_functions_from_partition(partition: list[NodeList]) -> BasisFunctions:
+    bf_da = partition_data_array(partition, mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+    bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+    return bf
+#+end_src
+
+#+RESULTS:
+
+We'll also make a function to plot the basis functions with country boundaries.
+
+#+begin_src jupyter-python
+def plot_bf_with_boundaries(bf: BasisFunctions, xlim=None, ylim=None, ax=None, shuffle: bool = True, colorbar: bool = False, **kwargs) -> None:
+    if ax is None:
+        _, ax = plt.subplots()
+
+    bfp = bf.plot(shuffle=shuffle, ax=ax, add_colorbar=colorbar, **kwargs)
+    plot_country_boundaries(ax)
+
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    if ylim is not None:
+        ax.set_ylim(ylim)
+#+end_src
+
+#+RESULTS:
+
+I'm having trouble getting good colors to distinguish nearby basis regions. Here is some [[https://stackoverflow.com/questions/42697933/colormap-with-maximum-distinguishable-colours][code from stackoverflow]] to make "distinguishable" colormaps:
+
+#+begin_src jupyter-python
+import math
+
+import numpy as np
+from matplotlib.colors import ListedColormap
+from matplotlib.cm import hsv
+
+
+def generate_colormap(number_of_distinct_colors: int = 80):
+    if number_of_distinct_colors == 0:
+        number_of_distinct_colors = 80
+
+    number_of_shades = 7
+    number_of_distinct_colors_with_multiply_of_shades = int(math.ceil(number_of_distinct_colors / number_of_shades) * number_of_shades)
+
+    # Create an array with uniformly drawn floats taken from <0, 1) partition
+    linearly_distributed_nums = np.arange(number_of_distinct_colors_with_multiply_of_shades) / number_of_distinct_colors_with_multiply_of_shades
+
+    # We are going to reorganise monotonically growing numbers in such way that there will be single array with saw-like pattern
+    #     but each saw tooth is slightly higher than the one before
+    # First divide linearly_distributed_nums into number_of_shades sub-arrays containing linearly distributed numbers
+    arr_by_shade_rows = linearly_distributed_nums.reshape(number_of_shades, number_of_distinct_colors_with_multiply_of_shades // number_of_shades)
+
+    # Transpose the above matrix (columns become rows) - as a result each row contains saw tooth with values slightly higher than row above
+    arr_by_shade_columns = arr_by_shade_rows.T
+
+    # Keep number of saw teeth for later
+    number_of_partitions = arr_by_shade_columns.shape[0]
+
+    # Flatten the above matrix - join each row into single array
+    nums_distributed_like_rising_saw = arr_by_shade_columns.reshape(-1)
+
+    # HSV colour map is cyclic (https://matplotlib.org/tutorials/colors/colormaps.html#cyclic), we'll use this property
+    initial_cm = hsv(nums_distributed_like_rising_saw)
+
+    lower_partitions_half = number_of_partitions // 2
+    upper_partitions_half = number_of_partitions - lower_partitions_half
+
+    # Modify lower half in such way that colours towards beginning of partition are darker
+    # First colours are affected more, colours closer to the middle are affected less
+    lower_half = lower_partitions_half * number_of_shades
+    for i in range(3):
+        initial_cm[0:lower_half, i] *= np.arange(0.2, 1, 0.8/lower_half)
+
+    # Modify second half in such way that colours towards end of partition are less intense and brighter
+    # Colours closer to the middle are affected less, colours closer to the end are affected more
+    for i in range(3):
+        for j in range(upper_partitions_half):
+            modifier = np.ones(number_of_shades) - initial_cm[lower_half + j * number_of_shades: lower_half + (j + 1) * number_of_shades, i]
+            modifier = j * modifier / upper_partitions_half
+            initial_cm[lower_half + j * number_of_shades: lower_half + (j + 1) * number_of_shades, i] += modifier
+
+    return ListedColormap(initial_cm)
+
+#+end_src
+
+#+RESULTS:
+
+Let's try to make the plots bigger too
+
+#+begin_src elisp
+(setq-local org-image-actual-width '(900))
+#+end_src
+
+#+RESULTS:
+| 900 |
+
+
+*** Partitioning without a mask
+
+First we make an initial partition with one region. (InTEM "inner region".)
+
+#+begin_src jupyter-python
+#init_part_one_region = [partition_remainder([], nx=mean_fp_x_flux.sizes["lat"], ny=mean_fp_x_flux.sizes["lon"])]
+init_part_one_region = [node_list_from_mask(outer_regions.region == 6)]
+#+end_src
+
+#+RESULTS:
+
+First, we'll make a balanced partition:
+
+#+begin_src jupyter-python
+ap_bal_part = axis_parallel_partitioning(init_part_one_region, n_parts=200, weights=weight_arr, balanced=True)
+
+ap_bal_part_bf = basis_functions_from_partition(ap_bal_part)
+plot_bf_with_boundaries(ap_bal_part_bf)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/b5d94e6a4de08fba6ccfee5aa9cb32af36cb333b.png]]
+:END:
+
+These thin regions (e.g. around the UK) seem typical of this method. It might be due to the poor choice of "long" axis
+in the balanced case.
+
+Let's zoom in to Europe:
+
+#+begin_src jupyter-python
+europe_lims = {"xlim": [-20, 20], "ylim": [30, 70]}
+uk_lims = {"xlim": [-12, 5], "ylim": [47, 62]}
+
+plot_bf_with_boundaries(ap_bal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 444
+[[file:./.ob-jupyter/f40fe86a5476e5cd68bc5424b3bff35297b42af7.png]]
+:END:
+
+Now we'll partition into regions of equal size, instead of equal weight.
+
+#+begin_src jupyter-python
+ap_unbal_part = axis_parallel_partitioning(init_part_one_region, n_parts=200, weights=weight_arr, balanced=False, clean_splits=True)
+
+ap_unbal_part_bf = basis_functions_from_partition(ap_unbal_part)
+plot_bf_with_boundaries(ap_unbal_part_bf)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/eb0037f1816ecc08bb74260feae47c7465d30f63.png]]
+:END:
+
+Zoomed in:
+
+#+begin_src jupyter-python
+# plot_bf_with_boundaries(ap_unbal_part_bf, **europe_lims)
+plot_bf_with_boundaries(ap_unbal_part_bf, **uk_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 485
+[[file:./.ob-jupyter/4aa6d3095063a52c4745f60a44db6b3ceeea2b18.png]]
+:END:
+
+
+Let's plot the UK regions side-by-side:
+
+#+begin_src jupyter-python
+fig, axs = plt.subplots(1, 2, figsize=(15, 7), sharey=True, layout="constrained")
+
+plot_bf_with_boundaries(ap_bal_part_bf, **uk_lims, ax=axs[0], colorbar=False)
+plot_bf_with_boundaries(ap_unbal_part_bf, **uk_lims, ax=axs[1], colorbar=False)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/cf2ce67ad462825aeacccf11101b77266fcf0c7d.png]]
+
+#+ATTR_ORG: :width 900
+#+RESULTS:
+
+Another peculiarity here is that the "unbalanced" splits are by the number of nodes, rather than by x or y coordinate exactly, so there are
+"steps" on the boundaries.
+
+*** Land/sea mask
+
+The process for creating basis functions with masks is the same, but we specify a different initial position.
+
+#+begin_src jupyter-python
+land_sea_ap_bal_part = axis_parallel_partitioning(land_sea_partition, n_parts=200, weights=weight_arr, balanced=True)
+
+land_sea_ap_bal_part_bf = basis_functions_from_partition(land_sea_ap_bal_part)
+plot_bf_with_boundaries(land_sea_ap_bal_part_bf)
+
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/eeaf06ba345a7bc54379c8bb3cb0a21b75db4bf5.png]]
+:END:
+
+Zoomed in to Europe:
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(land_sea_ap_bal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 444
+[[file:./.ob-jupyter/7ab50b7726457b3a1c4bc2c95d8f1f1a378e7ca5.png]]
+:END:
+
+This is generally better, but we still have "stripes" across North Africa.
+
+Now for the "unbalanced" version.
+
+#+begin_src jupyter-python
+land_sea_ap_unbal_part = axis_parallel_partitioning(land_sea_partition, n_parts=200, weights=weight_arr, balanced=False, clean_splits=True)
+
+land_sea_ap_unbal_part_bf = basis_functions_from_partition(land_sea_ap_unbal_part)
+plot_bf_with_boundaries(land_sea_ap_unbal_part_bf)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/77e0a6e0b16eda142ac126c79fd6289f8723a8ff.png]]
+:END:
+
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(land_sea_ap_unbal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 444
+[[file:./.ob-jupyter/d4baeabb1c549173abd6d293395dd2d2ca11cc5c.png]]
+:END:
+
+There aren't as many thin regions, but the partitioning of the ocean is less efficient.
+
+Side-by-side UK comparison:
+
+#+begin_src jupyter-python
+fig, axs = plt.subplots(1, 2, figsize=(15, 7), sharey=True, layout="constrained")
+
+plot_bf_with_boundaries(land_sea_ap_bal_part_bf, **europe_lims, ax=axs[0], colorbar=False, cmap=generate_colormap(200))
+plot_bf_with_boundaries(land_sea_ap_unbal_part_bf, **europe_lims, ax=axs[1], colorbar=False, cmap=generate_colormap(200))
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/5f861cb03016c50aa5bd6b1ad6e04de4a979b2a5.png]]
+
+#+ATTR_ORG: :width 900
+#+RESULTS:
+
+
+*** PARIS mask
+
+#+begin_src jupyter-python
+paris_ap_bal_part = axis_parallel_partitioning(paris_partition, n_parts=200, weights=weight_arr, balanced=True)
+
+paris_ap_bal_part_bf = basis_functions_from_partition(paris_ap_bal_part)
+plot_bf_with_boundaries(paris_ap_bal_part_bf)
+
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/fc9adbdc94892538c3e51b3fe70c7a3adeb3fd5e.png]]
+:END:
+
+Zoomed in to Europe:
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(paris_ap_bal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 444
+[[file:./.ob-jupyter/90e57db80e80120977927a8408b849c1a5488c73.png]]
+:END:
+
+This has stripes again. This might be due to some difference between selecting "OCEAN" as a country and using the land/sea mask.
+
+Now for the "unbalanced" version.
+
+#+begin_src jupyter-python
+paris_ap_unbal_part = axis_parallel_partitioning(paris_partition, n_parts=200, weights=weight_arr, balanced=False, clean_splits=True)
+
+paris_ap_unbal_part_bf = basis_functions_from_partition(paris_ap_unbal_part)
+plot_bf_with_boundaries(paris_ap_unbal_part_bf)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/8ad2aa14fb9286606f9a355fb6c0f08ec996d4f4.png]]
+:END:
+
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(paris_ap_unbal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 444
+[[file:./.ob-jupyter/04fd1f10b908c8b897ee99f3747381e3e7ab7095.png]]
+:END:
+
+Again, there aren't as many thin regions, but the partitioning of the ocean is less efficient.
+
+Side-by-side UK comparison:
+
+#+begin_src jupyter-python
+fig, axs = plt.subplots(1, 2, figsize=(15, 7), sharey=True, layout="constrained")
+
+# shuffle coords again
+# np.random.shuffle(paris_ap_bal_part_bf.labels_shuffled)
+
+plot_bf_with_boundaries(paris_ap_bal_part_bf, **uk_lims, ax=axs[0], shuffle=False, colorbar=False, cmap=generate_colormap(100))
+plot_bf_with_boundaries(paris_ap_unbal_part_bf, **uk_lims, ax=axs[1], shuffle=False, colorbar=False, cmap=generate_colormap(100))
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/eb7c9d15a28b39453a5eb56098368d8f6fb618f1.png]]
+
+#+ATTR_ORG: :width 900
+#+RESULTS:
+
+
+#+RESULTS:
+
+So we can see the "balanced" version has fewer ocean regions (but still has the "strips" issue).
+
+** Inertial partitioning
+
+Inertial partitioning uses the same greedy algorithm as axis-parallel partitioning, but instead of splitting parallel to the x or y axis,
+splits are done perpendicular to a line that minimises the "moment of inertia" of the points in a region.
+
+If the region was an ellipse and all weights were equal, then this line would be the longer (major) axis of the ellipse, and the region would
+be split by the smaller (minor) axis of the ellipse.
+
+Again, we can balance the split so there is equal weight in the two subparts, or we can split so they have an equal number of nodes (unbalanced).
+
+#+begin_src jupyter-python
+from inversions.basis_algorithms import inertial_partitioning
+#+end_src
+
+#+RESULTS:
+
+*** Single region
+
+
+First, we'll make a balanced partition:
+
+#+begin_src jupyter-python
+in_bal_part = inertial_partitioning(init_part_one_region, n_parts=10, weights=weight_arr, balanced=True)
+
+in_bal_part_bf = basis_functions_from_partition(in_bal_part)
+plot_bf_with_boundaries(in_bal_part_bf, shuffle=False)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/cd9676dd897704cc161673bf04b75f81c9728bce.png]]
+:END:
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(in_bal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 444
+[[file:./.ob-jupyter/856d0c4bafaf7dd46ea0b64c8f865159582de502.png]]
+:END:
+
+Again, there is a "strip" issue.
+
+Now we'll make unbalanced partitions.
+
+#+begin_src jupyter-python
+in_unbal_part = inertial_partitioning(init_part_one_region, n_parts=200, weights=weight_arr, balanced=False)
+
+in_unbal_part_bf = basis_functions_from_partition(in_unbal_part)
+plot_bf_with_boundaries(in_unbal_part_bf)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/66ee1e54b25708bd3dc6085c9b58d6911de695f2.png]]
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(in_unbal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/6a197bf495c035a3a9a50b4f08f748e9131f3fa5.png]]
+
+
+Now we'll compare the UK basis regions:
+
+#+begin_src jupyter-python
+fig, axs = plt.subplots(1, 2, figsize=(15, 7), sharey=True, layout="constrained")
+
+# shuffle coords again
+# np.random.shuffle(paris_ap_bal_part_bf.labels_shuffled)
+
+plot_bf_with_boundaries(in_bal_part_bf, **uk_lims, ax=axs[0], shuffle=False, colorbar=False, cmap=generate_colormap(100))
+plot_bf_with_boundaries(in_unbal_part_bf, **uk_lims, ax=axs[1], shuffle=False, colorbar=False, cmap=generate_colormap(100))
+#+end_src
+
+#+ATTR_ORG: :width 900
+#+RESULTS:
+[[file:./.ob-jupyter/48666bb862c4b92a513bc8fb1f85464b7e3aa09a.png]]
+
+...it's pretty hard to see what is going on.
+
+*** Land/sea mask
+
+First, we'll make a balanced partition:
+
+#+begin_src jupyter-python
+land_sea_in_bal_part = inertial_partitioning(land_sea_partition, n_parts=200, weights=weight_arr, balanced=True)
+
+land_sea_in_bal_part_bf = basis_functions_from_partition(land_sea_in_bal_part)
+plot_bf_with_boundaries(land_sea_in_bal_part_bf)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/a28544bf0993ab6b2c7facbbb3cb1f80c6a86474.png]]
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(land_sea_in_bal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/c326650dd728392cc521ad59520daa9fc1e1012b.png]]
+
+Again, there is a "strip" issue... maybe we need to put limits on how "eccentric" a region can be.
+
+Now we'll make unbalanced partitions.
+
+#+begin_src jupyter-python
+land_sea_in_unbal_part = inertial_partitioning(land_sea_partition, n_parts=200, weights=weight_arr, balanced=False)
+
+land_sea_in_unbal_part_bf = basis_functions_from_partition(land_sea_in_unbal_part)
+plot_bf_with_boundaries(land_sea_in_unbal_part_bf)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/928d003e94d3fb64376ff8ed6857a1e140ab17cb.png]]
+:END:
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(land_sea_in_unbal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 444
+[[file:./.ob-jupyter/9f547739d9f9e6a199769e032ca0547cf207dc7a.png]]
+:END:
+
+
+This is generally better looking. There are weird regions in N. Africa because the land/sea split map groups Africa with "OCEAN".
+
+Now we'll compare the UK basis regions:
+
+#+begin_src jupyter-python
+fig, axs = plt.subplots(1, 2, figsize=(15, 7), sharey=True, layout="constrained")
+
+# shuffle coords again
+# np.random.shuffle(paris_ap_bal_part_bf.labels_shuffled)
+
+plot_bf_with_boundaries(land_sea_in_bal_part_bf, **uk_lims, ax=axs[0], shuffle=False, colorbar=False, cmap=generate_colormap(100))
+plot_bf_with_boundaries(land_sea_in_unbal_part_bf, **uk_lims, ax=axs[1], shuffle=False, colorbar=False, cmap=generate_colormap(100))
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/7b6fb0fe19f739cae053c14ec82abb9c137416a3.png]]
+
+*** PARIS mask
+
+
+First, we'll make a balanced partition:
+
+#+begin_src jupyter-python
+paris_in_bal_part = inertial_partitioning(paris_partition, n_parts=200, weights=weight_arr, balanced=True)
+
+paris_in_bal_part_bf = basis_functions_from_partition(paris_in_bal_part)
+plot_bf_with_boundaries(paris_in_bal_part_bf)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/80ec990675816cd252e7939b92752ba93a829c33.png]]
+:END:
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(paris_in_bal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 444
+[[file:./.ob-jupyter/b828257112dc009df5e65a83a73a6477f8ca3438.png]]
+:END:
+
+Again, there is a "strip" issue... It seems like there are some ocean regions that bridges land (e.g. from Iceland to Algeria).
+
+Now we'll make unbalanced partitions.
+
+#+begin_src jupyter-python
+paris_in_unbal_part = inertial_partitioning(paris_partition, n_parts=200, weights=weight_arr, balanced=False)
+
+paris_in_unbal_part_bf = basis_functions_from_partition(paris_in_unbal_part)
+plot_bf_with_boundaries(paris_in_unbal_part_bf)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/a814543a15191fd66641af938a5a696436205bbf.png]]
+:END:
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(paris_in_unbal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 444
+[[file:./.ob-jupyter/ba144462af914244b5e6016e91e17fed800ef456.png]]
+:END:
+
+
+This is generally better looking. There are weird regions in N. Africa because the land/sea split map groups Africa with "OCEAN".
+
+Now we'll compare the UK basis regions:
+
+#+begin_src jupyter-python
+fig, axs = plt.subplots(1, 2, figsize=(15, 7), sharey=True, layout="constrained")
+
+# shuffle coords again
+# np.random.shuffle(paris_ap_bal_part_bf.labels_shuffled)
+
+plot_bf_with_boundaries(paris_in_bal_part_bf, **uk_lims, ax=axs[0], shuffle=False, colorbar=False, cmap=generate_colormap(200))
+plot_bf_with_boundaries(paris_in_unbal_part_bf, **uk_lims, ax=axs[1], shuffle=False, colorbar=False, cmap=generate_colormap(200))
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/43e4e5a2ce645ab5a96e0ce7b9ff0087f4dc3cfd.png]]
+
+*** PARIS partitions on InTEM inner region
+
+#+begin_src jupyter-python
+inner_region = set(node_list_from_mask(outer_regions.region.values == 6))
+paris_partition_inner = [set(part).intersection(inner_region) for part in paris_partition]
+paris_partition_inner = [list(p) for p in paris_partition_inner if p]
+#+end_src
+
+#+RESULTS:
+
+First, we'll make a balanced partition:
+
+#+begin_src jupyter-python
+paris_in_bal_part = inertial_partitioning(paris_partition_inner, n_parts=200, weights=weight_arr, balanced=True)
+
+paris_in_bal_part_bf = basis_functions_from_partition(paris_in_bal_part)
+plot_bf_with_boundaries(paris_in_bal_part_bf)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/0853696931182cbfbb18d6a59883573d2a478ab9.png]]
+:END:
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(paris_in_bal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 444
+[[file:./.ob-jupyter/4695ed1629e781b7c0f3a60b3e8ad1d7d08fe887.png]]
+:END:
+
+The "strip" issue is mostly fixed. (This comes from the early partitions involving the ocean, Africa, and the Americas)
+
+Now we'll make unbalanced partitions.
+
+#+begin_src jupyter-python
+paris_in_unbal_part = inertial_partitioning(paris_partition_inner, n_parts=200, weights=weight_arr, balanced=False)
+
+paris_in_unbal_part_bf = basis_functions_from_partition(paris_in_unbal_part)
+plot_bf_with_boundaries(paris_in_unbal_part_bf)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 563
+[[file:./.ob-jupyter/3cf3b0b412b66fe5171f140ff4e6868dd3d0af1f.png]]
+:END:
+
+#+begin_src jupyter-python
+plot_bf_with_boundaries(paris_in_unbal_part_bf, **europe_lims)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 444
+[[file:./.ob-jupyter/cf79f82a58318db462a9e88702b2a00c151f9ec8.png]]
+:END:
+
+
+This is generally better looking. There are weird regions in N. Africa because the land/sea split map groups Africa with "OCEAN".
+
+Now we'll compare the UK basis regions:
+
+#+begin_src jupyter-python
+fig, axs = plt.subplots(1, 2, figsize=(15, 7), sharey=True, layout="constrained")
+
+# shuffle coords again
+# np.random.shuffle(paris_ap_bal_part_bf.labels_shuffled)
+
+plot_bf_with_boundaries(paris_in_bal_part_bf, **uk_lims, ax=axs[0], shuffle=False, colorbar=False, cmap=generate_colormap(200))
+plot_bf_with_boundaries(paris_in_unbal_part_bf, **uk_lims, ax=axs[1], shuffle=False, colorbar=False, cmap=generate_colormap(200))
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/8837aa101443b36a45f6f538a6dfec8d6d1a8406.png]]
+
+
+Comparing Europe
+
+#+begin_src jupyter-python
+
+intem_ylim = [lat_coord[min(inner_region, key=lambda x: x[0])[0]], lat_coord[max(inner_region, key=lambda x: x[0])[0]]]
+intem_xlim = [lon_coord[min(inner_region, key=lambda x: x[1])[1]], lon_coord[max(inner_region, key=lambda x: x[1])[1]]]
+intem_lims = {"xlim": intem_xlim, "ylim": intem_ylim}
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+fig, axs = plt.subplots(1, 2, figsize=(15, 7), sharey=True, layout="constrained")
+
+# shuffle coords again
+# np.random.shuffle(paris_ap_bal_part_bf.labels_shuffled)
+
+plot_bf_with_boundaries(paris_in_bal_part_bf, **intem_lims, ax=axs[0], shuffle=False, colorbar=False, cmap=generate_colormap(200))
+plot_bf_with_boundaries(paris_in_unbal_part_bf, **intem_lims, ax=axs[1], shuffle=False, colorbar=False, cmap=generate_colormap(200))
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/a0dd37382a5c788d4ac2235ca0bedf5726bea51e.png]]
+
+
+*** Inertial vs. axis-parallel
+
+Let's compare the inertial basis regions vs. the axis-parallel unbalanced case, which is most similar to our current method.
+
+#+begin_src jupyter-python
+paris_inner_ap_unbal_part = axis_parallel_partitioning(paris_partition_inner, n_parts=200, weights=weight_arr, balanced=False, clean_splits=True)
+paris_inner_ap_unbal_bf = basis_functions_from_partition(paris_inner_ap_unbal_part)
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+paris_inner_ap_bal_part = axis_parallel_partitioning(paris_partition_inner, n_parts=200, weights=weight_arr, balanced=True, clean_splits=False)
+paris_inner_ap_bal_bf = basis_functions_from_partition(paris_inner_ap_bal_part)
+#+end_src
+
+#+RESULTS:
+
+
+Comparing InTEM inner region:
+#+begin_src jupyter-python
+fig, axs = plt.subplots(1, 2, figsize=(15, 7), sharey=True, layout="constrained")
+
+# shuffle coords again
+# np.random.shuffle(paris_ap_bal_part_bf.labels_shuffled)
+# np.random.shuffle(paris_inner_ap_unbal_bf.labels_shuffled)
+
+plot_bf_with_boundaries(paris_in_bal_part_bf, **intem_lims, ax=axs[0], shuffle=True, colorbar=False, cmap=generate_colormap(200))
+plot_bf_with_boundaries(paris_inner_ap_unbal_bf, **intem_lims, ax=axs[1], shuffle=True, colorbar=False, cmap=generate_colormap(200))
+# plot_bf_with_boundaries(paris_inner_ap_bal_bf, **intem_lims, ax=axs[1], shuffle=True, colorbar=False, cmap=generate_colormap(200))
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/3f87a450eb7af4e040852f1d4decfb2ff7a8d5a6.png]]
+
+
+Comparing the UK:
+
+#+begin_src jupyter-python
+fig, axs = plt.subplots(1, 2, figsize=(15, 7), sharey=True, layout="constrained")
+
+# shuffle coords again
+# np.random.shuffle(paris_ap_bal_part_bf.labels_shuffled)
+
+plot_bf_with_boundaries(paris_in_bal_part_bf, **uk_lims, ax=axs[0], shuffle=True, colorbar=False, cmap=generate_colormap(200))
+plot_bf_with_boundaries(paris_inner_ap_unbal_bf, **uk_lims, ax=axs[1], shuffle=True, colorbar=False, cmap=generate_colormap(200))
+#  plot_bf_with_boundaries(paris_inner_ap_bal_bf, **uk_lims, ax=axs[1], shuffle=True, colorbar=False, cmap=generate_colormap(200))
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/aaafecf71d84a808a617d6e35a08e416c90b3851.png]]
+
+** Summarising the "quality" of the basis functions
+
+We can measure how efficient our basis functions are by comparing the weight in each region to the total average weight.
+
+#+begin_src jupyter-python
+def partition_cost(partition: list[NodeList], weight_arr: np.ndarray) -> float:
+    n = len(partition)
+    part_weights = [sum(weight_arr[split_node_list(part)]) for part in partition]
+    avg_weight = sum(part_weights) / n
+
+    return sum(abs(pw - avg_weight) for pw in part_weights) / n
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+partitions = [paris_in_bal_part, paris_in_unbal_part, paris_inner_ap_bal_part, paris_inner_ap_unbal_part]
+
+for partition in partitions:
+    print(partition_cost(partition, weight_arr))
+#+end_src
+
+#+RESULTS:
+: 0.0455871
+: 0.06145499
+: 0.04467516
+: 0.07645864
+
+Surprisingly, the axis parallel balanced partition is slightly better than the inertial balanced partition. I suppose this is a consequence of the greedy algorithm: the inertial splits are more general than the axis-parallel splits, but we might not make the splits in the best possible order.
+
+Part of the "cost" of the partition is due to very large weights in single nodes.
+
+#+begin_src jupyter-python
+def irreducible_partition_cost(weight_arr: np.ndarray, n: int, thres: float = 1.1) -> float:
+    avg_weight = weight_arr.sum() / n
+    big_weights = weight_arr[weight_arr > thres * avg_weight]
+    return np.sum(np.abs(big_weights - avg_weight)) / n
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+irreducible_partition_cost(weight_arr[np.where(outer_regions.region.values == 6)], n=200, thres=2.0)
+#+end_src
+
+#+RESULTS:
+: np.float32(0.014403202)
+
+So about a third of the cost of the two best partitions is due to nodes (grid cells) whose weight is twice the average weight.
+
+This leaves open the possibility of improving our partitions further.
+
+* Tests with synthetic data
+
+#+begin_src jupyter-python
+weight_arr = np.arange(64).reshape(8, 8)
+weight_arr
+#+end_src
+
+#+RESULTS:
+|    |   0 |   1 |   2 |   3 |   4 |   5 |   6 |   7 |
+|----+-----+-----+-----+-----+-----+-----+-----+-----|
+|  0 |   0 |   1 |   2 |   3 |   4 |   5 |   6 |   7 |
+|  1 |   8 |   9 |  10 |  11 |  12 |  13 |  14 |  15 |
+|  2 |  16 |  17 |  18 |  19 |  20 |  21 |  22 |  23 |
+|  3 |  24 |  25 |  26 |  27 |  28 |  29 |  30 |  31 |
+|  4 |  32 |  33 |  34 |  35 |  36 |  37 |  38 |  39 |
+|  5 |  40 |  41 |  42 |  43 |  44 |  45 |  46 |  47 |
+|  6 |  48 |  49 |  50 |  51 |  52 |  53 |  54 |  55 |
+|  7 |  56 |  57 |  58 |  59 |  60 |  61 |  62 |  63 |
+
+#+begin_src jupyter-python
+#nodes = [(0, 7), (1, 6), (2, 5), (3, 4), (4, 3), (5, 2), (6, 1), (7, 0), (7, 7)]
+nodes = []
+for i in range(8):
+    for j in range(8):
+        if i + j >= 7:
+            nodes.append((i, j))
+
+plt.scatter([n[0] for n in nodes], [n[1] for n in nodes])
+plt.imshow(weight_arr.T, origin="lower")
+plt.colorbar()
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.colorbar.Colorbar at 0x30caa1760>
+#+attr_org: :width 478
+[[file:./.ob-jupyter/f59f6bf0d1cf7f5f4fe128b3adc620eaaf4b1bea.png]]
+:END:
+
+#+begin_src jupyter-python
+nodes_tall = [(i, j) for i in range(3, 5) for j in range(8)]
+nodes_wide = [(i, j) for i in range(8) for j in range(3, 5)]
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+from inversions.basis_algorithms import split_node_list
+
+plt.scatter(*split_node_list(nodes_tall), color="orange")
+plt.scatter(*split_node_list(nodes_wide), color="blue")
+plt.imshow(weight_arr.T, origin="lower")
+plt.colorbar()
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.colorbar.Colorbar at 0x125108c50>
+#+attr_org: :width 478
+[[file:./.ob-jupyter/573a72abcda43ab2eb7d43e3604fbde76a443d30.png]]
+:END:
+
+** Trying to fix bad axis-parallel balanced splits
+
+Let's look at the axis-parallel split for our example above.
+
+#+begin_src jupyter-python
+from inversions.basis_algorithms import axis_parallel_split
+
+a1, b1 = axis_parallel_split(nodes, weight_arr, balanced=True, clean_splits=True)
+a2, b2 = axis_parallel_split(nodes, weight_arr, balanced=False, clean_splits=True)
+#+end_src
+
+#+RESULTS:
+
+First we'll plot the balanced partition, then the unbalanced.
+
+#+begin_src jupyter-python
+plt.scatter([n[0] for n in a1], [n[1] for n in a1], color="orange")
+plt.scatter([n[0] for n in b1], [n[1] for n in b1], color="blue")
+plt.imshow(weight_arr.T, origin="lower")
+plt.colorbar()
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.colorbar.Colorbar at 0x30f7781a0>
+#+attr_org: :width 478
+[[file:./.ob-jupyter/a9a10f665a9b91954827e4678b198c5ad433c2ed.png]]
+:END:
+
+#+begin_src jupyter-python
+plt.scatter([n[0] for n in a2], [n[1] for n in a2], color="orange")
+plt.scatter([n[0] for n in b2], [n[1] for n in b2], color="blue")
+plt.imshow(weight_arr.T, origin="lower")
+plt.colorbar()
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.colorbar.Colorbar at 0x30da59eb0>
+#+attr_org: :width 478
+[[file:./.ob-jupyter/55711f7fa9fd894bcc97f97411eae9fbeb662ae1.png]]
+:END:
+
+Notes:
+1. axis 0 (x-axis) was chosen as the long axis by default, since the projections onto the x and y axes are the same; hence the split is perpendicular to the x-axis
+2. the splits are into equal numbers in the unbalanced case, even though this changes classes in the middle of a column.
+
+Now, if we remove the node (0, 7), this will make the y-axis the longer axis, and the splits will be different.
+
+#+begin_src jupyter-python
+nodes2 = nodes.copy()
+nodes2.remove((0, 7))
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+a1, b1 = axis_parallel_split(nodes2, weight_arr, balanced=True)
+a2, b2 = axis_parallel_split(nodes2, weight_arr, balanced=False)
+#+end_src
+
+#+RESULTS:
+
+First we'll plot the balanced partition, then the unbalanced.
+
+#+begin_src jupyter-python
+plt.scatter([n[0] for n in a1], [n[1] for n in a1], color="orange")
+plt.scatter([n[0] for n in b1], [n[1] for n in b1], color="blue")
+plt.imshow(weight_arr.T, origin="lower")
+plt.colorbar()
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.colorbar.Colorbar at 0x30d6249b0>
+#+attr_org: :width 478
+[[file:./.ob-jupyter/480c63c3f066bf545f2511e98e914a10d399e1a7.png]]
+:END:
+
+#+begin_src jupyter-python
+plt.scatter([n[0] for n in a2], [n[1] for n in a2], color="orange")
+plt.scatter([n[0] for n in b2], [n[1] for n in b2], color="blue")
+plt.imshow(weight_arr.T, origin="lower")
+plt.colorbar()
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.colorbar.Colorbar at 0x30d6e40b0>
+#+attr_org: :width 478
+[[file:./.ob-jupyter/7ec0b55a91b295d532e7d69cb379f465133d26f4.png]]
+:END:
+
+*** Improving axis selection in weighted case
+
+We saw that removing the node (0, 7) from the node list above changed the long axis from the x-axis to
+the y-axis.
+
+Let's look at how the "long axis" is selected.
+
+#+begin_src jupyter-python
+from inversions.basis_algorithms import long_axis, long_axis_weighted
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+print(long_axis(nodes), long_axis(nodes2), long_axis(nodes_tall), long_axis(nodes_wide))
+#+end_src
+
+#+RESULTS:
+: 0 1 1 0
+
+Here is a weighted version (which isn't used in the examples above yet...)
+
+#+begin_src jupyter-python
+print(long_axis_weighted(nodes, weight_arr), long_axis_weighted(nodes2, weight_arr), long_axis_weighted(nodes_tall, weight_arr), long_axis_weighted(nodes_wide, weight_arr))
+#+end_src
+
+#+RESULTS:
+: 1 1 1 0
+
+#+begin_src jupyter-python
+from inversions.basis_algorithms import centroid
+
+print(centroid(nodes, weight_arr[split_node_list(nodes)]), centroid(nodes2, weight_arr[split_node_list(nodes2)]), centroid(nodes_tall, weight_arr[split_node_list(nodes_tall)]), centroid(nodes_wide, weight_arr[split_node_list(nodes_wide)]))
+#+end_src
+
+#+RESULTS:
+: [5.36111111 4.38888889] [5.38604651 4.37674419] [3.56349206 3.66666667] [4.83333333 3.50793651]
+
+
+#+begin_src jupyter-python
+nodes_all = [(i, j) for i in range(8) for j in range(8)]
+nodes_lower = [n for n in nodes_all if n not in nodes]
+for x in [nodes, nodes2, nodes_tall, nodes_wide, nodes_all, nodes_lower]:
+    weights = weight_arr[split_node_list(x)]
+
+    parr = np.array(x)
+    warr = np.array(weights).reshape(-1, 1)
+
+    c = (parr * warr).sum(axis=0) / warr.sum()
+
+    spread = (warr * (parr - c)**2).sum(axis=0) / warr.sum()
+    spread_l1 = (warr * np.abs(parr - c)).sum(axis=0) / warr.sum()
+
+    print(c, spread, spread_l1)
+#+end_src
+
+#+RESULTS:
+: [5.36111111 4.38888889] [2.61959877 4.12654321] [1.33950617 1.73280423]
+: [5.38604651 4.37674419] [2.49747972 4.11387777] [1.31790157 1.72924361]
+: [3.56349206 3.66666667] [0.24596876 5.22222222] [0.49193752 1.98941799]
+: [4.83333333 3.50793651] [3.47222222 0.24993701] [1.55753968 0.49987402]
+: [4.83333333 3.66666667] [3.47222222 5.22222222] [1.55753968 1.98941799]
+: [3.25 1.5 ] [2.6875 2.25  ] [1.38095238 1.25      ]

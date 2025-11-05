@@ -1,0 +1,2739 @@
+#+title: Graph Basis Functions
+
+#+property: header-args:jupyter-python :kernel inversions :session graph_basis_functions :async yes :export both
+
+
+* Introduction
+
+We want to compute basis functions (or basis "regions") that respect geographic restrictions. For instance, basis functions shouldn't cross land/sea boundaries or country boundaries.
+
+** Existing approach (and possible extensions)
+Currently, the "weighted" basis algorithm does this for land/sea boundaries by repeatedly bisecting rectangular basis regions, then splitting the regions found into land and sea regions.
+One downside to this is that the "sea" regions created by splitting the rectangular basis regions might not have much "signal", so we end up with more sea basis regions than we need.
+
+Another option is to separately optimise for basis functions using just the land flux (setting the sea flux to zero), and then optimising for basis functions using just the sea flux. This requires a further optimisation over the number of basis functions for each masked flux (although 5-10 for sea is probably a reasonable amount in most cases).
+
+This approach could be extended further, e.g. to mask off "important" countries like the UK, Germany, France, Italy, or regions like "BENELUX", where emissions are large and the countries share boundaries. The issue of choosing a number of basis functions for each region becomes more pronounced in this case.
+
+** Alternative approach using a graph to encode geographic restrictions
+
+We can represent the domain we want to partition as a graph (which we'll denote by \(G\)):
+- vertices/nodes are grid cells at the original resolution
+- edges connect grid cells that share a side (i.e. NESW or top-bottom-left-right)
+
+This graph is a simple 2D lattice.
+
+Other edges structures are possible, for instance, edges between grid cells that share some geographic feature, like being wetlands, or mountains.
+This additional structure could be quite useful, but it might make the graph "non-planar" (i.e. there is no way to draw the edges without crossings). For the generic approach I'm suggesting, this doesn't matter, but "planarity" makes some things simpler.
+
+Now the problem of finding basis functions is reduced to finding a "partition" of the graph \(G\), which is a grouping of nodes/vertices into disjoint (non-overlapping) subsets. Typically we want a partition where each subset of vertices has roughly the same "size", and where the number of edges between subsets is minimised.
+
+The basic way of doing this is very similar to the weighted algorithm:
+1. start with a vertex set \(V\)
+2. split \(V\) into two pieces \(V_1\) and \(V_2\) (bisection step)
+3. continue splitting the \(V_i\)'s' (e.g. by adding them to a queue of subsets to bisect)
+4. when a subset of vertices is "small enough", stop trying to bisect it
+5. stop when all subsets of vertices are "small enough"
+
+We can add geographic restrictions by removing edges. For instance, removing all edges between land and sea vertices, or removing all edges between vertices that belong to the UK and other vertices.
+This means instead of starting with the full set of vertices \(V\), we would already have a partition based on the geographic restrictions \(V_1,V_2,\ldots,V_n\), so we're starting from step 3.
+
+There are many possible "bisection" methods. The simplest one (that works for "planar graphs" like our lattice) looks at the x or y coordinates of the vertices and partitions the vertices by splitting the x or y coordinates into equal sizes (so essentially, splitting a rectangle in half, either vertically or horizontally).
+
+A more sophisticated method is "inertial partitioning", which projects the points onto a line that minimises the "moment of inertia" about that line (essentially, the line is the least square fit to the points), and then partitioning the vertices based on where they fall on this line. This means we're always bisecting the vertices across the "longest" axis.
+
+These methods allow us to use "weights" on the vertices, so instead of splitting into subsets with the same number of vertices, we can split into subsets of equal total weight. The weights we want to use for basis functions are typically mean footprint times mean flux.
+
+* Getting some test data
+
+First we'll get a mean fp x flux map, then find a mask to use for testing.
+
+#+begin_src shell
+ls ~/Documents/openghg_inversions/tests/data
+#+end_src
+
+#+RESULTS:
+| basis                                                                   |
+| bc_basis_NESW_EUROPE_2019.nc                                            |
+| bc_ch4_europe_cams_2019-01-01_2019-12-31_data.nc                        |
+| country_EASTASIA.nc                                                     |
+| country_EUROPE.nc                                                       |
+| flux_total_ch4_europe_edgar7_2019-01-01_2019-12-31_data_dim_shuffled.nc |
+| flux_total_ch4_europe_edgar7_2019-01-01_2019-12-31_data.nc              |
+| footprints_mhd_europe_name_10m_2019-01-01_2019-01-07_data.nc            |
+| footprints_tac_europe_name_185m_2019-01-01_2019-01-07_data.nc           |
+| inversion_output_EASTASIA.nc                                            |
+| inversion_output.nc                                                     |
+| merged_data_test_tac_combined_scenario_v14.nc                           |
+| obs_mhd_ch4_10m_2019-01-01_2019-01-07_data.nc                           |
+| obs_tac_ch4_185m_2019-01-01_2019-02-01_data.nc                          |
+| satellite                                                               |
+| standard_rhime_outs_EASTASIA.nc                                         |
+| standard_rhime_outs.nc                                                  |
+
+#+begin_src jupyter-python
+import xarray as xr
+
+
+merged_data = xr.open_dataset("~/Documents/openghg_inversions/tests/data/merged_data_test_tac_combined_scenario_v14.nc")
+print(merged_data)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+<xarray.Dataset> Size: 31MB
+Dimensions:                              (site: 1, time: 24, lat: 293,
+                                          lon: 391, height: 20, source: 1)
+Coordinates:
+  ,* site                                 (site) <U3 12B 'TAC'
+  ,* time                                 (time) datetime64[ns] 192B 2019-01-0...
+  ,* lat                                  (lat) float64 2kB 10.73 10.96 ... 79.06
+  ,* lon                                  (lon) float64 3kB -97.9 ... 39.38
+  ,* height                               (height) float32 80B 500.0 ... 1.95e+04
+  ,* source                               (source) <U18 72B 'total-ukghg-edgar7'
+Data variables: (12/34)
+    mf                                   (site, time) float64 192B ...
+    mf_number_of_observations            (site, time) float64 192B ...
+    mf_variability                       (site, time) float64 192B ...
+    air_pressure                         (site, time) float32 96B ...
+    air_temperature                      (site, time) float32 96B ...
+    atmosphere_boundary_layer_thickness  (site, time) float32 96B ...
+    ...                                   ...
+    mf_error                             (site, time) float64 192B ...
+    flux                                 (source, lat, lon) float32 458kB ...
+    vmr_e                                (height, lat) float64 47kB ...
+    vmr_n                                (height, lon) float64 63kB ...
+    vmr_s                                (height, lon) float64 63kB ...
+    vmr_w                                (height, lat) float64 47kB ...
+Attributes: (12/21)
+    site:                  tac
+    inlet:                 185m
+    instrument:            picarro
+    sampling_period:       60.0
+    sampling_period_unit:  s
+    averaged_period_str:   1h
+    ...                    ...
+    domain:                europe
+    max_longitude:         39.38
+    min_longitude:         -97.9
+    max_latitude:          79.057
+    min_latitude:          10.729
+    file_created:          2025-08-21 14:18:33.532305+00:00
+#+end_example
+
+#+begin_src jupyter-python
+mean_fp_x_flux = merged_data.fp_x_flux.mean("time").squeeze("site")
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+print(mean_fp_x_flux)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+<xarray.DataArray 'fp_x_flux' (lat: 293, lon: 391)> Size: 458kB
+array([[0.0000000e+00, 0.0000000e+00, 0.0000000e+00, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00],
+       [0.0000000e+00, 0.0000000e+00, 0.0000000e+00, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00],
+       [0.0000000e+00, 0.0000000e+00, 0.0000000e+00, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00],
+       ...,
+       [4.5895665e-10, 1.3396589e-09, 7.8212281e-10, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00],
+       [9.1372998e-09, 1.4945419e-08, 4.3345774e-10, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00],
+       [0.0000000e+00, 0.0000000e+00, 0.0000000e+00, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00]], shape=(293, 391), dtype=float32)
+Coordinates:
+  ,* lat      (lat) float64 2kB 10.73 10.96 11.2 11.43 ... 78.59 78.82 79.06
+  ,* lon      (lon) float64 3kB -97.9 -97.55 -97.2 -96.84 ... 38.68 39.03 39.38
+    site     <U3 12B 'TAC'
+#+end_example
+
+#+begin_src shell
+ls ~/Documents/openghg_inversions/openghg_inversions/basis/algorithms
+#+end_src
+
+#+RESULTS:
+| __init__.py                         |
+| __pycache__                         |
+| _quadtree.py                        |
+| _weighted.py                        |
+| country-EUROPE-UKMO-landsea-2023.nc |
+| country-land-sea_EASTASIA.nc        |
+
+#+begin_src jupyter-python
+land_sea_mask = xr.open_dataset("~/Documents/openghg_inversions/openghg_inversions/basis/algorithms/country-EUROPE-UKMO-landsea-2023.nc")
+print(land_sea_mask)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+<xarray.Dataset> Size: 922kB
+Dimensions:       (lat: 293, lon: 391, ncountries: 2)
+Coordinates:
+  ,* lat           (lat) float64 2kB 10.73 10.96 11.2 11.43 ... 78.59 78.82 79.06
+  ,* lon           (lon) float64 3kB -97.9 -97.55 -97.2 ... 38.68 39.03 39.38
+  ,* ncountries    (ncountries) int64 16B 0 1
+Data variables:
+    country       (lat, lon) float64 917kB ...
+    name          (ncountries) <U4 32B ...
+    country_code  (ncountries) int64 16B ...
+Attributes:
+    Created by:    Alistair J. Manning
+    Processed by:  Eric Saboya
+    date created:  2023-08-09
+    Notes:         UKMO country mask version April 2022
+    domain:        EUROPE
+#+end_example
+
+* Making a networkx graph to represent the grid
+** Making a small grid graph and removing some edges
+#+begin_src jupyter-python
+import networkx as nx
+#+end_src
+
+#+RESULTS:
+
+We'll use ~grid_graph~ to make a lattice graph where grid cells are nodes and two grid cells are connected if they share a boundary (i.e. NESW or top/bottom/left/right).
+
+Let's plot a smaller version to see what this looks like:
+
+#+begin_src jupyter-python
+small_G = nx.grid_graph((6, 7))
+pos = {(x ,y): (y, -x) for x, y in small_G.nodes}
+nx.draw(small_G, pos=pos)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/a6537e6a0c3788e64ff2d5de4094a2fe83823ff6.png]]
+
+Now we want to remove some edges to enforce some region constraint.
+
+#+begin_src jupyter-python
+import numpy as np
+
+mask = np.zeros((6, 7), dtype=int)
+mask[:3, :4] = 1
+
+print(np.where(mask == 1))
+#+end_src
+
+#+RESULTS:
+: (array([0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]), array([0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3]))
+
+#+begin_src jupyter-python
+mask_nodes = list(zip(*np.where(mask == 1)))
+mask_boundary = list(nx.edge_boundary(small_G, mask_nodes))
+small_G.remove_edges_from(mask_boundary)
+nx.draw(small_G, pos=pos)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/a25ea2f9a8bca4f69574e80cf98ba88687f5d014.png]]
+
+** Making a grid graph from mean fp x flux
+
+#+begin_src jupyter-python
+mean_fp_x_flux.shape
+#+end_src
+
+#+RESULTS:
+| 293 | 391 |
+
+
+#+begin_src jupyter-python
+G2 = nx.grid_2d_graph(*mean_fp_x_flux.shape)
+print(len(set([x for x, _ in G2.nodes])))
+print(len(set([y for _, y in G2.nodes])))
+#+end_src
+
+#+RESULTS:
+: 293
+: 391
+
+#+begin_src jupyter-python
+G = nx.grid_2d_graph(*mean_fp_x_flux.shape)
+G
+#+end_src
+
+#+RESULTS:
+: <networkx.classes.graph.Graph at 0x31b9e9890>
+
+#+begin_src jupyter-python
+print(len(G.nodes))
+print(len(G.edges))
+#+end_src
+
+#+RESULTS:
+: 114563
+: 228442
+
+Note that the shape of the grid graph is different from the shape of the mask:
+#+begin_src jupyter-python
+x_vals = set([x for x, _ in G.nodes])
+y_vals = set([y for _, y in G.nodes])
+num_x = len(x_vals)
+num_y = len(y_vals)
+print(num_x, num_y)
+#+end_src
+
+#+RESULTS:
+: 293 391
+
+
+#+begin_src jupyter-python
+land_sea_mask.country.values.shape
+#+end_src
+
+#+RESULTS:
+| 293 | 391 |
+
+Now use the land/sea file to make a mask.
+
+#+begin_src jupyter-python
+def node_list_from_mask(mask: np.ndarray) -> list[tuple[int, int]]:
+    return list(zip(*np.where(mask)))
+
+def remove_node_boundary(g: nx.Graph, nodes: list[tuple[int, int]]) -> None:
+    boundary = list(nx.edge_boundary(g, nodes))
+    g.remove_edges_from(boundary)
+#+end_src
+
+#+RESULTS:
+
+
+#+begin_src jupyter-python
+node_list = node_list_from_mask(land_sea_mask.country.values == 1)
+remove_node_boundary(G, node_list)
+#+end_src
+
+#+RESULTS:
+
+
+#+begin_src jupyter-python
+nodes_sel = [(x, y) for x, y in G.nodes if x > 100 and y > 200]
+pos = {(x, y): (y, x) for x, y in nodes_sel}
+nx.draw(G.subgraph(nodes_sel), pos=pos, node_size=0.02)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/135a67601565d09efe0984f5963700d6a8069fba.png]]
+
+
+Let's color the components and plot using xarray.
+
+#+begin_src jupyter-python
+conn_comp = list(nx.connected_components(G))
+len(conn_comp)
+#+end_src
+
+#+RESULTS:
+: 3
+
+#+begin_src jupyter-python
+def partition_dataarray(partition: list[list[tuple[int, int]]], lat_coord, lon_coord) -> xr.DataArray:
+    comp_arr = np.zeros((len(lat_coord), len(lon_coord)), dtype="int")
+
+    for i, part in enumerate(partition):
+        for pair in part:
+            comp_arr[*pair] = i
+
+    return xr.DataArray(comp_arr, dims=["lat", "lon"], coords=[lat_coord, lon_coord])
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+comp_arr = np.zeros((num_x, num_y), dtype="int")
+
+for i, comp in enumerate(conn_comp):
+    for pair in comp:
+        comp_arr[*pair] = i
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+comp_da = xr.DataArray(comp_arr, dims=["lat", "lon"], coords=[land_sea_mask.lat, land_sea_mask.lon])
+comp_da.plot()
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.collections.QuadMesh at 0x32079d290>
+[[file:./.ob-jupyter/ae256d4bac91c25fc9fe06eeee8dd13d15f5b558.png]]
+:END:
+
+** Adding weights
+
+The weights we'll use come from the "fp x flux" array.
+
+#+begin_src jupyter-python
+print(mean_fp_x_flux)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+<xarray.DataArray 'fp_x_flux' (lat: 293, lon: 391)> Size: 458kB
+array([[0.0000000e+00, 0.0000000e+00, 0.0000000e+00, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00],
+       [0.0000000e+00, 0.0000000e+00, 0.0000000e+00, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00],
+       [0.0000000e+00, 0.0000000e+00, 0.0000000e+00, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00],
+       ...,
+       [4.5895665e-10, 1.3396589e-09, 7.8212281e-10, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00],
+       [9.1372998e-09, 1.4945419e-08, 4.3345774e-10, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00],
+       [0.0000000e+00, 0.0000000e+00, 0.0000000e+00, ..., 0.0000000e+00,
+        0.0000000e+00, 0.0000000e+00]], shape=(293, 391), dtype=float32)
+Coordinates:
+  ,* lat      (lat) float64 2kB 10.73 10.96 11.2 11.43 ... 78.59 78.82 79.06
+  ,* lon      (lon) float64 3kB -97.9 -97.55 -97.2 -96.84 ... 38.68 39.03 39.38
+    site     <U3 12B 'TAC'
+#+end_example
+
+#+begin_src jupyter-python
+for n in G.nodes:
+    G.nodes[n]["weight"] = mean_fp_x_flux.values[*n]
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+sum(G.nodes[n]["weight"] for n in G.nodes)
+#+end_src
+
+#+RESULTS:
+: np.float32(26.14712)
+
+#+begin_src jupyter-python
+mean_fp_x_flux.sum().values
+#+end_src
+
+#+RESULTS:
+: array(26.148447, dtype=float32)
+
+* Partitioning the grid graph to balance mean fp x flux
+
+First we'll select a connected component.
+
+#+begin_src jupyter-python
+comp = G.subgraph(conn_comp[1])
+print(len(comp.nodes))
+#+end_src
+
+#+RESULTS:
+: 11304
+
+** Axis parallel splits
+We want to split perpendicular to the longer axis.
+
+#+begin_src jupyter-python
+def long_axis(G) -> int:
+    x_min = min(x for x, _ in G.nodes)
+    x_max = max(x for x, _ in G.nodes)
+    y_min = min(y for _, y in G.nodes)
+    y_max = max(y for _, y in G.nodes)
+    if x_max - x_min > y_max - y_min:
+        return 0
+    return 1
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+long_axis(comp)
+#+end_src
+
+#+RESULTS:
+: 0
+
+#+begin_src jupyter-python
+def index_of_half_cumulative_sum(weights: list[float | int]) -> int:
+    total = sum(weights)
+    cumsum = 0.0
+    idx = 0
+    while cumsum < total / 2:
+        cumsum += weights[idx]
+        idx += 1
+
+    # check if previous cumsum is better
+    if idx > 0 and (cumsum  - total / 2 < weights[idx - 1] / 2):
+        return idx - 1
+    return idx
+
+def axis_parallel_split(G, axis: int, balanced: bool = True) -> tuple:
+    nodes = sorted(G.nodes, key=lambda n: (n[axis], n[1 - axis]))
+    if balanced:
+        weights = [G.nodes[n].get("weight", 1) for n in nodes]
+        idx = index_of_half_cumulative_sum(weights)
+    else:
+        idx = len(nodes) // 2
+    return G.subgraph(nodes[:idx+1]), G.subgraph(nodes[idx+1:])
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+comp0, comp1 = axis_parallel_split(comp, 0)
+print(len(comp0.nodes), len(comp1.nodes))
+#+end_src
+
+#+RESULTS:
+: 0 7
+
+#+begin_src jupyter-python
+def total_weight(G):
+    return sum(G.nodes[n].get("weight", 1) for n in G.nodes)
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+print(total_weight(comp0), total_weight(comp1))
+#+end_src
+
+#+RESULTS:
+: 0 1.2006629
+
+Let's plot what we have so far:
+#+begin_src jupyter-python
+comp_list2 = [conn_comp[0], comp0.nodes, conn_comp[2], comp1.nodes]
+
+partition_dataarray(comp_list2, land_sea_mask.lat, land_sea_mask.lon).plot()
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.collections.QuadMesh at 0x317741810>
+[[file:./.ob-jupyter/25f71ceedbc5c26d8e9c516119acea16c48dee0d.png]]
+:END:
+
+
+
+** Iterating splits using a priority queue
+
+We'll use a priority queue to make splits greedily. Python has a priority queue but it assumes the items in the queue are comparable, so to circumvent this we can use a wrapper that compares by priority:
+
+#+begin_src jupyter-python
+from dataclasses import dataclass, field
+from typing import Any
+
+@dataclass(order=True)
+class PrioritizedItem:
+    priority: int | float
+    item: Any=field(compare=False)
+#+end_src
+
+#+RESULTS:
+
+A priority queue in python is a "min" queue, so it returns the minimum priority element first. We'll use the negative of the total weight in a component as its priority, so components with more weight are returned first.
+
+#+begin_src jupyter-python
+from queue import PriorityQueue
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+init_comps = [G.subgraph(comp) for comp in nx.connected_components(G)]
+q = PriorityQueue()
+
+for comp in init_comps:
+    pcomp = PrioritizedItem(-total_weight(comp), comp)
+    q.put_nowait(pcomp)
+#+end_src
+
+#+RESULTS:
+
+Now we can iterate the step we did before.
+
+#+begin_src jupyter-python
+done_components = []
+
+n_components = len(init_comps)
+
+while n_components < 10 and q:
+    comp = q.get_nowait().item
+    subcomps = axis_parallel_split(comp, long_axis(comp))
+
+    # split the other way if we get an empty component...
+    # if any(len(scomp.nodes) == 0 for scomp in subcomps):
+    #     subcomps = axis_parallel_split(comp, 1 - long_axis(comp))
+
+    # if any is still zero, just split in the middle
+    # if any(len(scomp.nodes) == 0 for scomp in subcomps):
+    #     subcomps = axis_parallel_split(comp, long_axis(comp), balanced=False)
+
+    # # otherwise... try splitting the other direction
+    # if any(len(scomp.nodes) == 0 for scomp in subcomps):
+    #     subcomps = axis_parallel_split(comp, 1 - long_axis(comp), balanced=False)
+
+    # finally... retired this component
+    if any(len(scomp.nodes) == 0 for scomp in subcomps):
+        done_components.append(comp)
+        continue
+
+    for scomp in subcomps:
+        if len(scomp.nodes) > 1:
+            q.put_nowait(PrioritizedItem(-total_weight(scomp), scomp))
+        else:
+            done_components.append(scomp)
+
+    n_components += 1
+
+#+end_src
+
+#+RESULTS:
+
+How many components of size 1 are there?
+
+#+begin_src jupyter-python
+len(done_components)
+#+end_src
+
+#+RESULTS:
+: 92
+
+How many are not empty?
+#+begin_src jupyter-python
+len([c for c in done_components if len(c.nodes) > 0])
+#+end_src
+
+#+RESULTS:
+: 92
+
+
+Now we'll get any items from the queue.
+#+begin_src jupyter-python
+while not q.empty():
+    done_components.append(q.get_nowait().item)
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+len(done_components)
+#+end_src
+
+#+RESULTS:
+: 250
+
+#+begin_src jupyter-python
+len([c for c in done_components if len(c.nodes) > 0])
+#+end_src
+
+#+RESULTS:
+: 250
+
+
+Now we can make an array from the partition and plot:
+
+#+begin_src jupyter-python
+partition_dataarray([c.nodes for c in done_components], land_sea_mask.lat, land_sea_mask.lon).plot()
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.collections.QuadMesh at 0x327b5e890>
+[[file:./.ob-jupyter/922091c18af97719129f0af1eafbfb92fc2a27a6.png]]
+:END:
+
+#+begin_src jupyter-python
+import pandas as pd
+
+pd.Series([total_weight(c) for c in done_components]).describe()
+#+end_src
+
+#+RESULTS:
+: count    2.500000e+02
+: mean     1.045938e-01
+: std      8.105846e-02
+: min      8.664279e-07
+: 25%      7.545378e-02
+: 50%      8.871468e-02
+: 75%      1.088550e-01
+: max      7.893624e-01
+: dtype: float64
+
+#+begin_src jupyter-python
+np.log(mean_fp_x_flux).plot()
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: /Users/bm13805/Documents/openghg_inversions/.venv/lib/python3.11/site-packages/xarray/computation/apply_ufunc.py:818: RuntimeWarning: divide by zero encountered in log
+:   result_data = func(*input_data)
+: <matplotlib.collections.QuadMesh at 0x31d16c450>
+[[file:./.ob-jupyter/ec64cb07f147b7f4b6353284a6c859c97644be78.png]]
+:END:
+
+#+begin_src jupyter-python
+pd.Series([total_weight(c) for c in done_components]).sum()
+#+end_src
+
+#+RESULTS:
+: np.float32(26.148441)
+
+#+begin_src jupyter-python
+#%run ../../src/inversions/basis_functions.py
+from inversions.basis_functions import *
+#+end_src
+
+#+RESULTS:
+
+
+#+begin_src jupyter-python
+bf_da = partition_dataarray([c.nodes for c in done_components], land_sea_mask.lat, land_sea_mask.lon)
+bf = BasisFunctions(bf_da + 1, flux=xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+bf.plot(shuffle=True)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/41836bec8df5b70312f3296690cb22c41730bc79.png]]
+
+** "Inertial" splits/partitioning
+
+The previous method works, but tends to produce long strips... we could add some heuristics to fix this, or we could try to make better splits.
+
+We can use [[https://en.wikipedia.org/wiki/Deming_regression][Deming regression]] (with weights) to find an axis that minimises the moment of inertia of the points in a component about this axis.
+
+#+begin_src jupyter-python
+parr = np.array(comp.nodes)
+warr = np.array([comp.nodes[n].get("weight", 1.0) for n in comp.nodes]).reshape(-1, 1)
+print(parr.shape, warr.shape)
+#+end_src
+
+#+RESULTS:
+: (4812, 2) (4812, 1)
+
+First we need weighted means of the x and y components.
+
+#+begin_src jupyter-python
+wavgs = (warr * parr).sum(axis=0) / warr.sum()
+print(wavgs)
+#+end_src
+
+#+RESULTS:
+: [181.73281349 276.72451509]
+
+Now we need weighted second moments.
+
+#+begin_src jupyter-python
+m2 = (warr * (parr - wavgs)**2).sum(axis=0) / warr.sum()
+mxy = ((warr * (parr - wavgs))[:, 0] * (parr - wavgs)[:, 1]).sum() / warr.sum()
+print(m2, mxy)
+#+end_src
+
+#+RESULTS:
+: [15.75892161 44.01423505] 3.2898195762271403
+
+Then the coefficients are:
+
+#+begin_src jupyter-python
+a = (m2[1] - m2[0] + np.sqrt((m2[1] - m2[0])**2 + 4 * mxy**2)) / (2 * mxy)
+b = m2[1] - a * m2[0]
+print(a, b)
+#+end_src
+
+#+RESULTS:
+: 8.703607062890097 -93.14522642312888
+
+#+begin_src jupyter-python
+def deming_regression_coeff(points, weights) -> tuple[float, float]:
+    """Return coefficients for Deming regression line."""
+    parr = np.array(points)
+    warr = np.array(weights).reshape(-1, 1)
+
+    wavgs = (parr * warr).sum(axis=0) / warr.sum()
+
+    m2 = (warr * (parr - wavgs)**2).sum(axis=0) # / warr.sum()
+    mxy = ((warr * (parr - wavgs))[:, 0] * (parr - wavgs)[:, 1]).sum() # / warr.sum()
+
+    a = (m2[1] - m2[0] + np.sign(m2[1] - m2[0]) * np.sqrt((m2[1] - m2[0])**2 + 4 * mxy**2)) / (2 * mxy)
+    b = wavgs[1] - a * wavgs[0]
+
+    return a, b
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+deming_regression_coeff(comp.nodes, [comp.nodes[n].get("weight", 1.0) for n in comp.nodes])
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+# [goto error]
+: ---------------------------------------------------------------------------
+: NameError                                 Traceback (most recent call last)
+: Cell In[191], line 1
+: ----> 1 deming_regression_coeff(comp.nodes, [comp.nodes[n].get("weight", 1.0) for n in comp.nodes])
+:
+: NameError: name 'comp' is not defined
+:END:
+
+
+The x components of the projection of the points onto this line can now be found.
+
+#+begin_src jupyter-python
+def deming_x_value(a, b, point):
+    x, y = point
+    return x + a / (1 + a**2) * (y - a * x - b)
+#+end_src
+
+#+RESULTS:
+
+Now we can do inertial splitting:
+
+#+begin_src jupyter-python
+def inertial_split(G, balanced: bool = True) -> tuple:
+    _nodes = G.nodes
+    _weights = [G.nodes[n].get("weight", 1.0) for n in G.nodes]
+    a, b = deming_regression_coeff(_nodes, _weights)
+
+    nodes = sorted(G.nodes, key=lambda n: deming_x_value(a, b, n))
+
+    if balanced:
+        weights = [G.nodes[n].get("weight", 1) for n in nodes]
+        idx = index_of_half_cumulative_sum(weights)
+    else:
+        idx = len(nodes) // 2
+    return G.subgraph(nodes[:idx+1]), G.subgraph(nodes[idx+1:])
+#+end_src
+
+#+RESULTS:
+
+Now we can run the algorithm.
+
+#+begin_src jupyter-python
+init_comps = [G.subgraph(comp) for comp in nx.connected_components(G)]
+q = PriorityQueue()
+
+for comp in init_comps:
+    pcomp = PrioritizedItem(-total_weight(comp), comp)
+    q.put_nowait(pcomp)
+
+done_components = []
+
+n_components = len(init_comps)
+
+while n_components < 250 and q:
+    comp = q.get_nowait().item
+    subcomps = inertial_split(comp, long_axis(comp))
+
+    # split the other way if we get an empty component...
+    # if any(len(scomp.nodes) == 0 for scomp in subcomps):
+    #     subcomps = axis_parallel_split(comp, 1 - long_axis(comp))
+
+    # if any is still zero, just split in the middle
+    # if any(len(scomp.nodes) == 0 for scomp in subcomps):
+    #     subcomps = axis_parallel_split(comp, long_axis(comp), balanced=False)
+
+    # # otherwise... try splitting the other direction
+    # if any(len(scomp.nodes) == 0 for scomp in subcomps):
+    #     subcomps = axis_parallel_split(comp, 1 - long_axis(comp), balanced=False)
+
+    # finally... retired this component
+    if any(len(scomp.nodes) == 0 for scomp in subcomps):
+        done_components.append(comp)
+        continue
+
+    for scomp in subcomps:
+        if len(scomp.nodes) > 1:
+            q.put_nowait(PrioritizedItem(-total_weight(scomp), scomp))
+        else:
+            done_components.append(scomp)
+
+    n_components += 1
+
+while not q.empty():
+    done_components.append(q.get_nowait().item)
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+bf_da = partition_dataarray([c.nodes for c in done_components], land_sea_mask.lat, land_sea_mask.lon)
+bf = BasisFunctions(bf_da + 1, flux=xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+bf.plot(shuffle=True)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/410635f1b2ef0fdad7fc9fee33a404c36c27e041.png]]
+
+
+#+begin_src jupyter-python
+pd.Series([total_weight(c) for c in done_components]).describe()
+#+end_src
+
+#+RESULTS:
+: count    2.500000e+02
+: mean     1.045938e-01
+: std      1.263086e-01
+: min      8.664279e-07
+: 25%      5.530352e-02
+: 50%      8.202451e-02
+: 75%      1.074830e-01
+: max      1.174292e+00
+: dtype: float64
+
+* Partitioning more regions
+
+Let's get a country file and use that to partition.
+#+begin_src shell
+ls ~/Documents/openghg_inversions/tests/data
+#+end_src
+
+#+RESULTS:
+| basis                                                                   |
+| bc_basis_NESW_EUROPE_2019.nc                                            |
+| bc_ch4_europe_cams_2019-01-01_2019-12-31_data.nc                        |
+| country_EASTASIA.nc                                                     |
+| country_EUROPE.nc                                                       |
+| flux_total_ch4_europe_edgar7_2019-01-01_2019-12-31_data_dim_shuffled.nc |
+| flux_total_ch4_europe_edgar7_2019-01-01_2019-12-31_data.nc              |
+| footprints_mhd_europe_name_10m_2019-01-01_2019-01-07_data.nc            |
+| footprints_tac_europe_name_185m_2019-01-01_2019-01-07_data.nc           |
+| inversion_output_EASTASIA.nc                                            |
+| inversion_output.nc                                                     |
+| merged_data_test_tac_combined_scenario_v14.nc                           |
+| obs_mhd_ch4_10m_2019-01-01_2019-01-07_data.nc                           |
+| obs_tac_ch4_185m_2019-01-01_2019-02-01_data.nc                          |
+| satellite                                                               |
+| standard_rhime_outs_EASTASIA.nc                                         |
+| standard_rhime_outs.nc                                                  |
+
+#+begin_src jupyter-python
+countries = xr.open_dataset("~/Documents/openghg_inversions/tests/data/country_EUROPE.nc")
+print(countries)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+<xarray.Dataset> Size: 941kB
+Dimensions:  (lat: 293, lon: 391, ncountries: 104)
+Coordinates:
+  ,* lat      (lat) float32 1kB 10.73 10.96 11.2 11.43 ... 78.59 78.82 79.06
+  ,* lon      (lon) float32 2kB -97.9 -97.55 -97.2 -96.84 ... 38.68 39.03 39.38
+Dimensions without coordinates: ncountries
+Data variables:
+    country  (lat, lon) float64 917kB ...
+    name     (ncountries) <U52 22kB ...
+Attributes:
+    title:     Grid of country extent across EUROPE domain
+    author:    File created by ag12733
+    database:  Natural_Earth database with scale 1:50m used to create this fi...
+    extent:    Domain beween latitude 10.7290000916 - 79.0569992065, longitud...
+#+end_example
+
+#+begin_src jupyter-python
+print(countries.name.values)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+['OCEAN' 'VENEZUELA' 'VIRGIN ISLANDS' 'PUERTO RICO' 'UNITED STATES'
+ 'ANGUILLA' 'ISLE OF MAN'
+ 'UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND' 'UKRAINE' 'TURKEY'
+ 'TUNISIA' 'TRINIDAD AND TOBAGO' 'TOGO' 'SYRIAN ARAB REPUBLIC'
+ 'SWITZERLAND' 'SWEDEN' 'SOUTH SUDAN' 'SUDAN' 'SPAIN' 'SLOVAKIA'
+ 'SLOVENIA' 'SERBIA' 'SENEGAL' 'SAUDI ARABIA' 'SAINT LUCIA'
+ 'RUSSIAN FEDERATION' 'ROMANIA' 'PORTUGAL' 'POLAND' 'NORWAY' 'NIGERIA'
+ 'NIGER' 'NICARAGUA' 'NETHERLANDS' 'MOROCCO' 'SAMOA' 'MONTENEGRO'
+ 'MOLDOVA' 'MEXICO' 'MAURITANIA' 'MALI' 'MACEDONIA' 'LUXEMBOURG'
+ 'LITHUANIA' 'LIBYA' 'LEBANON' 'LATVIA' 'KOSOVO' 'JORDAN' 'JAMAICA'
+ 'ITALY' 'ISRAEL' 'PALESTINE' 'IRELAND' 'IRAQ' 'ICELAND' 'HUNGARY'
+ 'HONDURAS' 'HAITI' 'GUINEA-BISSAU' 'GUINEA' 'GUATEMALA' 'GRENADA'
+ 'GREECE' 'GHANA' 'GERMANY' 'GAMBIA' 'FRANCE' 'FINLAND' 'ETHIOPIA'
+ 'ESTONIA' 'ERITREA' 'EL SALVADOR' 'EGYPT' 'DOMINICAN REPUBLIC' 'DOMINICA'
+ 'GREENLAND' 'FAROE ISLANDS' 'DENMARK' 'CZECHIA' 'N. CYPRUS' 'CYPRUS'
+ 'CUBA' 'CROATIA' 'COSTA RICA' 'COLOMBIA' 'CHAD'
+ 'CENTRAL AFRICAN REPUBLIC' 'CABO VERDE' 'CANADA' 'CAMEROON'
+ 'BURKINA FASO' 'BULGARIA' 'BOSNIA AND HERZEGOVINA' 'BENIN' 'BELIZE'
+ 'BELGIUM' 'BELARUS' 'BARBADOS' 'BAHAMAS' 'AUSTRIA' 'ANDORRA' 'ALGERIA'
+ 'ALBANIA']
+#+end_example
+
+Let's isolate: the following regions
+
+#+begin_src jupyter-python
+to_mask = ['OCEAN',
+# 'UNITED STATES',
+ 'UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND',
+# 'SPAIN',
+ # 'NETHERLANDS',
+ # 'LUXEMBOURG',
+# 'ITALY',
+# 'IRELAND',
+ 'GERMANY',
+ 'FRANCE',
+# 'CANADA',
+ # 'BELGIUM',
+ # 'AUSTRIA',
+ # 'SWITZERLAND',
+ # 'SWEDEN',
+ # 'NORWAY',
+ ]
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+to_mask_code = [i for i, name in enumerate(countries.name.values) if name in to_mask]
+print(to_mask_code)
+#+end_src
+
+#+RESULTS:
+: [0, 7, 65, 67]
+
+
+Let's collect the code for building the graph.
+
+#+begin_src jupyter-python
+def make_basis_graph(weights: xr.DataArray | np.ndarray, *masks: np.ndarray) -> nx.Graph:
+    if len(weights.shape) != 2:
+        raise ValueError("")
+    if masks is not None and any(weights.shape != mask.shape for mask in masks):
+        raise ValueError("masks must have the same shape as the weights array.")
+
+
+    G = nx.grid_2d_graph(*weights.shape)
+
+    if isinstance(weights, xr.DataArray):
+        weights = weights.values
+
+    for n in G.nodes:
+        G.nodes[n]["weight"] = weights[*n]
+
+    # disconnect masked regions
+    for mask in masks:
+        mask_nodes = node_list_from_mask(mask)
+        remove_node_boundary(G, mask_nodes)
+
+    return G
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+G = make_basis_graph(mean_fp_x_flux, *(countries.country.values == i for i in to_mask_code))
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+len(list(nx.connected_components(G)))
+#+end_src
+
+#+RESULTS:
+: 322
+
+Let's plot the regions so far.
+#+begin_src jupyter-python
+partition_dataarray(list(nx.connected_components(G)), mean_fp_x_flux.lat, mean_fp_x_flux.lon).plot()
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+# [goto error]
+: ---------------------------------------------------------------------------
+: NameError                                 Traceback (most recent call last)
+: Cell In[19], line 1
+: ----> 1 partition_dataarray(list(nx.connected_components(G)), mean_fp_x_flux.lat, mean_fp_x_flux.lon).plot()
+:
+: NameError: name 'G' is not defined
+:END:
+
+To avoid components due to e.g. inlets, regions surrounded by water, etc, we need to
+include other regions with "OCEAN".
+
+#+begin_src jupyter-python
+print(countries.name.values)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+['OCEAN' 'VENEZUELA' 'VIRGIN ISLANDS' 'PUERTO RICO' 'UNITED STATES'
+ 'ANGUILLA' 'ISLE OF MAN'
+ 'UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND' 'UKRAINE' 'TURKEY'
+ 'TUNISIA' 'TRINIDAD AND TOBAGO' 'TOGO' 'SYRIAN ARAB REPUBLIC'
+ 'SWITZERLAND' 'SWEDEN' 'SOUTH SUDAN' 'SUDAN' 'SPAIN' 'SLOVAKIA'
+ 'SLOVENIA' 'SERBIA' 'SENEGAL' 'SAUDI ARABIA' 'SAINT LUCIA'
+ 'RUSSIAN FEDERATION' 'ROMANIA' 'PORTUGAL' 'POLAND' 'NORWAY' 'NIGERIA'
+ 'NIGER' 'NICARAGUA' 'NETHERLANDS' 'MOROCCO' 'SAMOA' 'MONTENEGRO'
+ 'MOLDOVA' 'MEXICO' 'MAURITANIA' 'MALI' 'MACEDONIA' 'LUXEMBOURG'
+ 'LITHUANIA' 'LIBYA' 'LEBANON' 'LATVIA' 'KOSOVO' 'JORDAN' 'JAMAICA'
+ 'ITALY' 'ISRAEL' 'PALESTINE' 'IRELAND' 'IRAQ' 'ICELAND' 'HUNGARY'
+ 'HONDURAS' 'HAITI' 'GUINEA-BISSAU' 'GUINEA' 'GUATEMALA' 'GRENADA'
+ 'GREECE' 'GHANA' 'GERMANY' 'GAMBIA' 'FRANCE' 'FINLAND' 'ETHIOPIA'
+ 'ESTONIA' 'ERITREA' 'EL SALVADOR' 'EGYPT' 'DOMINICAN REPUBLIC' 'DOMINICA'
+ 'GREENLAND' 'FAROE ISLANDS' 'DENMARK' 'CZECHIA' 'N. CYPRUS' 'CYPRUS'
+ 'CUBA' 'CROATIA' 'COSTA RICA' 'COLOMBIA' 'CHAD'
+ 'CENTRAL AFRICAN REPUBLIC' 'CABO VERDE' 'CANADA' 'CAMEROON'
+ 'BURKINA FASO' 'BULGARIA' 'BOSNIA AND HERZEGOVINA' 'BENIN' 'BELIZE'
+ 'BELGIUM' 'BELARUS' 'BARBADOS' 'BAHAMAS' 'AUSTRIA' 'ANDORRA' 'ALGERIA'
+ 'ALBANIA']
+#+end_example
+
+#+begin_src jupyter-python
+ocean_mask_countries = ["OCEAN", "GREENLAND"]
+ocean_mask_countries_codes = [i for i, name in enumerate(countries.name.values) if name in ocean_mask_countries]
+ocean_mask = countries.country.isin(ocean_mask_countries_codes)
+ocean_mask = ocean_mask.where((ocean_mask.lat < 65) , 1)
+#+end_src
+
+#+RESULTS:
+
+Let's go back to the land/sea mask.
+
+#+begin_src jupyter-python
+ocean_mask = (land_sea_mask.country == 0) | (countries.country == 0)
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+G = make_basis_graph(mean_fp_x_flux, ocean_mask, *(countries.country.values == i for i in to_mask_code[1:]))
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+len(list(nx.connected_components(G)))
+#+end_src
+
+#+RESULTS:
+: 84
+
+#+begin_src jupyter-python
+for c in nx.connected_components(G):
+    print(len(c), end=", ")
+#+end_src
+
+#+RESULTS:
+: 104603, 2, 1, 748, 27, 6326, 1, 1, 1, 1, 1, 1, 1, 29, 4, 1, 1, 1, 1, 13, 762, 1, 1, 1, 552, 113, 356, 1, 1, 113, 1, 1, 728, 23, 1, 1, 1, 2, 1, 54, 2, 4, 1, 1, 1, 1, 1, 1, 1, 2, 5, 3, 6, 2, 3, 3, 1, 2, 1, 2, 1, 1, 1, 1, 1, 1, 7, 4, 2, 7, 1, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+
+#+begin_src jupyter-python
+bf_da = partition_dataarray(list(nx.connected_components(G)), mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+bf.plot(shuffle=True)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/d8cf053fc33c35ae0621cf9b4cc78f832aa32f0d.png]]
+
+
+It would be nice to clean up small regions before starting the partitioning...
+
+#+begin_src jupyter-python
+def inertial_partitioning(init_comps: nx.Graph | list[nx.Graph], n_parts: int, verbose: bool = False, balanced: bool = True) -> list[nx.Graph]:
+    if isinstance(init_comps, nx.Graph):
+        init_comps = [init_comps.subgraph(comp) for comp in nx.connected_components(init_comps)]
+
+    q = PriorityQueue()
+
+    for comp in init_comps:
+        pcomp = PrioritizedItem(-total_weight(comp), comp)
+        q.put_nowait(pcomp)
+
+    done_components = []
+
+    n_components = len(init_comps)
+
+    while n_components < n_parts and q:
+        comp = q.get_nowait().item
+        subcomps = inertial_split(comp, balanced)
+
+        # retired this component if it isn't splitting
+        if any(len(scomp.nodes) == 0 for scomp in subcomps):
+            done_components.append(comp)
+            if verbose:
+                print(f"Couldn't split component of size {len(comp.nodes)}")
+            continue
+
+        for scomp in subcomps:
+            if len(scomp.nodes) > 1:
+                q.put_nowait(PrioritizedItem(-total_weight(scomp), scomp))
+            else:
+                done_components.append(scomp)
+
+        n_components += 1
+
+    if verbose:
+        print("Number done:", len(done_components))
+
+    while not q.empty():
+        done_components.append(q.get_nowait().item)
+
+    return done_components
+
+#+end_src
+
+#+RESULTS:
+
+
+#+begin_src jupyter-python
+G = make_basis_graph(mean_fp_x_flux)
+
+init_comps = [node_list_from_mask(ocean_mask)]
+
+for i in to_mask_code[1:]:
+    init_comps.append(node_list_from_mask(countries.country.values == i))
+
+print(len(init_comps))
+print([len(c) for c in init_comps])
+
+remainder = []
+for n in node_list_from_mask(~ocean_mask):
+    if all(n not in c for c in init_comps[1:]):
+        remainder.append(n)
+
+init_comps.append(remainder)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+# [goto error]
+: ---------------------------------------------------------------------------
+: NameError                                 Traceback (most recent call last)
+: Cell In[21], line 3
+:       1 G = make_basis_graph(mean_fp_x_flux)
+: ----> 3 init_comps = [node_list_from_mask(ocean_mask)]
+:       5 for i in to_mask_code[1:]:
+:       6     init_comps.append(node_list_from_mask(countries.country.values == i))
+:
+: NameError: name 'ocean_mask' is not defined
+:END:
+
+#+begin_src jupyter-python
+ipart = inertial_partitioning([G.subgraph(c) for c in init_comps], 36, verbose=True)
+#+end_src
+
+#+RESULTS:
+: Number done: 0
+
+#+begin_src jupyter-python
+bf_da = partition_dataarray([p.nodes for p in ipart], mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+bf.plot(shuffle=False)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/19d4fdfa8e2c0d1e5eaf4d4d6288153f5282af70.png]]
+
+
+The last region is the one that gets split into a narrow piece.
+
+#+begin_src jupyter-python
+bf_da2 = partition_dataarray([[]] + [ipart[0].nodes], mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf2 = BasisFunctions(bf_da2, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+bf2.plot(shuffle=False)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/bd54846ce424514e27cc924e56dedd18946f1e06.png]]
+
+
+#+begin_src jupyter-python
+sum(G.nodes[n]["weight"] for n in ipart[0])
+#+end_src
+
+#+RESULTS:
+: np.float32(1.1564308)
+
+#+begin_src jupyter-python
+deming_regression_coeff(ipart[0], [G.nodes[n]["weight"] for n in ipart[0]])
+#+end_src
+
+#+RESULTS:
+| np.float64 | (-92.39877318782233) | np.float64 | (185811.8547010321) |
+
+
+For comparison, let's look at the axis-parallel version.
+
+#+begin_src jupyter-python
+def axis_parallel_partitioning(init_comps: nx.Graph | list[nx.Graph], n_parts: int, verbose: bool = False, balanced: bool = True) -> list[nx.Graph]:
+    if isinstance(init_comps, nx.Graph):
+        init_comps = [init_comps.subgraph(comp) for comp in nx.connected_components(init_comps)]
+
+    q = PriorityQueue()
+
+    for comp in init_comps:
+        pcomp = PrioritizedItem(-total_weight(comp), comp)
+        q.put_nowait(pcomp)
+
+    done_components = []
+
+    n_components = len(init_comps)
+
+    while n_components < n_parts and q:
+        comp = q.get_nowait().item
+        subcomps = axis_parallel_split(comp, long_axis(comp), balanced=balanced)
+
+        # retired this component if it isn't splitting
+        if any(len(scomp.nodes) == 0 for scomp in subcomps):
+            done_components.append(comp)
+            if verbose:
+                print(f"Couldn't split component of size {len(comp.nodes)}")
+            continue
+
+        for scomp in subcomps:
+            if len(scomp.nodes) > 1:
+                q.put_nowait(PrioritizedItem(-total_weight(scomp), scomp))
+            else:
+                done_components.append(scomp)
+
+        n_components += 1
+
+    while not q.empty():
+        done_components.append(q.get_nowait().item)
+
+    return done_components
+
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+ap_part = axis_parallel_partitioning([G.subgraph(c) for c in init_comps], 250, verbose=True, balanced=True)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+Couldn't split component of size 36
+Couldn't split component of size 4
+Couldn't split component of size 7
+Couldn't split component of size 5
+Couldn't split component of size 2
+Couldn't split component of size 5
+Couldn't split component of size 6
+Couldn't split component of size 3
+Couldn't split component of size 3
+Couldn't split component of size 6
+Couldn't split component of size 2
+Couldn't split component of size 4
+Couldn't split component of size 6
+Couldn't split component of size 2
+Couldn't split component of size 2
+Couldn't split component of size 4
+Couldn't split component of size 3
+Couldn't split component of size 5
+Couldn't split component of size 4
+Couldn't split component of size 4
+Couldn't split component of size 52
+Couldn't split component of size 3
+Couldn't split component of size 2
+Couldn't split component of size 2
+Couldn't split component of size 3
+Couldn't split component of size 4
+Couldn't split component of size 4
+Couldn't split component of size 37
+Couldn't split component of size 3
+Couldn't split component of size 2
+Couldn't split component of size 2
+Couldn't split component of size 2
+Couldn't split component of size 5
+Couldn't split component of size 7
+Couldn't split component of size 3
+Couldn't split component of size 6
+Couldn't split component of size 3
+Couldn't split component of size 2
+Couldn't split component of size 2
+Couldn't split component of size 2
+Couldn't split component of size 3
+Couldn't split component of size 2
+Couldn't split component of size 2
+Couldn't split component of size 2
+Couldn't split component of size 2
+Couldn't split component of size 3
+Couldn't split component of size 26
+#+end_example
+
+#+begin_src jupyter-python
+bf_da = partition_dataarray([p.nodes for p in ap_part], mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+bf.plot(shuffle=False)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/4a650b7f36ae610018c4f9fdd67db7cc5285c9d5.png]]
+
+* Cleaning up tiny connected components
+
+Separating some regions creates very small connected components in some cases. Let's try to clean these up by moving them to a nearby large component.
+
+
+** Example of small components
+
+#+begin_src jupyter-python
+# ocean_mask = (land_sea_mask.country == 0) | (countries.country == 0)
+ocean_mask = countries.country == 0
+# ocean_mask = land_sea_mask.country == 0
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+G = make_basis_graph(mean_fp_x_flux, ocean_mask, *(countries.country.values == i for i in to_mask_code[1:]))
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+len(list(nx.connected_components(G)))
+#+end_src
+
+#+RESULTS:
+: 322
+
+#+begin_src jupyter-python
+for c in nx.connected_components(G):
+    print(len(c), end=", ")
+#+end_src
+
+#+RESULTS:
+: 573, 12215, 63440, 71, 1, 1, 24168, 1, 1, 1, 1, 2, 2, 1, 2, 1, 292, 1, 1, 1, 2, 1, 80, 1, 12, 10, 1, 1, 110, 1, 2, 2, 1, 2, 1, 4, 1, 1, 2, 1, 2, 2, 1, 1, 6, 3, 1, 2, 1, 11, 10, 1, 750, 1, 27, 1, 1, 1, 1, 1, 1, 3, 1, 1, 1, 1, 1, 1, 29, 1, 1, 4, 1, 1, 1, 1, 1, 1, 570, 1, 13, 762, 1, 1, 1, 4, 1, 1, 4, 5, 1, 1, 2, 1, 159, 1, 3, 1, 1, 1, 1, 552, 4, 1, 1, 12, 1, 113, 1, 356, 1, 1, 1, 1, 2, 1, 113, 1, 4, 1, 1, 1, 4, 728, 2, 23, 1, 1, 1, 2, 1, 54, 2, 4, 1, 1, 1, 3, 1, 1, 1, 1, 1, 1, 2, 5, 1, 3, 6, 1, 1, 2, 3, 3, 1, 1, 6052, 1, 2, 1, 2, 1, 2, 1, 1, 1, 1, 1, 2, 1, 6, 1382, 3, 12, 2, 1, 97, 3, 1, 1, 2, 1, 229, 1, 1, 1, 2, 1, 110, 1, 1, 1, 1, 1, 5, 1, 1, 3, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 24, 3, 5, 1, 1, 4, 1, 1, 3, 3, 27, 2, 7, 1, 1, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 3, 3, 1, 1, 1, 2, 1, 1, 4, 2, 1, 1, 2, 3, 21, 1, 1, 3, 5, 2, 2, 1, 3, 35, 2, 5, 7, 1, 1, 4, 29, 541, 7, 7, 2, 1, 3, 3, 142, 1, 5, 5, 1, 2, 31, 32, 1, 2, 1, 1, 1, 1, 3, 2, 61, 1, 1, 1, 8, 2, 1, 9, 1,
+
+#+begin_src jupyter-python
+import matplotlib.pyplot as plt
+
+bf_da = partition_dataarray(list(nx.connected_components(G)), mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+
+fig, ax = plt.subplots()
+bf.plot(shuffle=True, ax=ax)
+# ax.set_ylim((35, 72))
+# ax.set_xlim((-20, 30))
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/413925ec8b5009249a4a7d7b0a0fb08cc9b41395.png]]
+
+An issue is that some of these look like islands.
+
+*** Fix by avoiding connected components
+But! we can simply use these node lists, instead of getting connected components:
+
+#+begin_src jupyter-python
+# node_list = [node_list_from_mask(countries.country.values == i) for i in to_mask_code]
+# node_list.append(node_list_from_mask(~countries.country.isin(to_mask_code)))
+node_list = [node_list_from_mask(countries.country.values == i) for i in range(len(countries.name))]
+bf_da = partition_dataarray(node_list, mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+
+fig, ax = plt.subplots()
+bf.plot(shuffle=True, ax=ax)
+# ax.set_ylim((35, 72))
+# ax.set_xlim((-20, 30))
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/fd45cc49026f2eae5ac98151200f5a58cbe32d59.png]]
+
+This looks better.
+
+*** Finding basis functions for fix
+What does it look like if we optimise for basis functions?
+
+#+begin_src jupyter-python
+ap_part = axis_parallel_partitioning([G.subgraph(c) for c in node_list], 250, verbose=False, balanced=False)
+bf_da = partition_dataarray([p.nodes for p in ap_part], mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+bf.plot(shuffle=True)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/245e4ea81be68c194a5f7806df3426d2a819a45b.png]]
+
+#+begin_src jupyter-python
+ipart = inertial_partitioning([G.subgraph(c) for c in node_list], 250, verbose=False, balanced=False)
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+bf_da = partition_dataarray([p.nodes for p in ipart], mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+bf.plot(shuffle=True)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/8ad0e3f579fe20c3c1b4b125fd06c902c24584f7.png]]
+
+** Trying an EEZ map
+
+#+begin_src jupyter-python
+countries_eez = xr.open_dataset("~/Documents/openghg_inversions/countries/country_EUROPE_EEZ_PARIS_gapfilled.nc")
+print(countries_eez)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+<xarray.Dataset> Size: 924kB
+Dimensions:       (lat: 293, lon: 391, ncountries: 40)
+Coordinates:
+  ,* lat           (lat) float32 1kB 10.73 10.96 11.2 11.43 ... 78.59 78.82 79.06
+  ,* lon           (lon) float32 2kB -97.9 -97.55 -97.2 ... 38.68 39.03 39.38
+  ,* ncountries    (ncountries) int64 320B 0 1 2 3 4 5 6 ... 33 34 35 36 37 38 39
+Data variables:
+    country       (lat, lon) float64 917kB ...
+    name          (ncountries) <U22 4kB ...
+    country_code  (ncountries) <U5 800B ...
+Attributes:
+    Notes:                       Created using NaturalEarth 10m Land and Mari...
+    Marine_regions_data:         https://www.marineregions.org/eez.php
+    Land_regions_data:           https://www.naturalearthdata.com/downloads/1...
+    Includes_ocean_territories:  True
+    domain:                      EUROPE
+    Created_by:                  aramsden@bristol.ac.uk
+    Created_on:                  2024-02-23 09:49:32.694672+00:00
+#+end_example
+
+#+begin_src jupyter-python
+for i, name in enumerate(countries_eez.name.values):
+    print(i, name)
+#+end_src
+
+#+RESULTS:
+#+begin_example
+0 OCEAN
+1 ALBANIA
+2 AUSTRIA
+3 BELGIUM
+4 BULGARIA
+5 BOSNIA AND HERZEGOVINA
+6 BELARUS
+7 SWITZERLAND
+8 CZECHIA
+9 GERMANY
+10 DENMARK
+11 SPAIN
+12 ESTONIA
+13 FINLAND
+14 FRANCE
+15 UNITED KINGDOM
+16 GREECE
+17 CROATIA
+18 HUNGARY
+19 IRELAND
+20 ICELAND
+21 ITALY
+22 LITHUANIA
+23 LUXEMBOURG
+24 LATVIA
+25 MOLDOVA
+26 NORTH MACEDONIA
+27 MONTENEGRO
+28 NETHERLANDS
+29 NORWAY
+30 POLAND
+31 PORTUGAL
+32 ROMANIA
+33 RUSSIA
+34 REPUBLIC OF SERBIA
+35 SLOVAKIA
+36 SLOVENIA
+37 SWEDEN
+38 TURKEY
+39 UKRAINE
+#+end_example
+
+#+begin_src jupyter-python
+to_mask_eez_code = [0, 3, 9, 11, 14, 15, 21, 28]
+G = make_basis_graph(mean_fp_x_flux, *(countries_eez.country.values == i for i in to_mask_eez_code))
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+len(list(nx.connected_components(G)))
+#+end_src
+
+#+RESULTS:
+: 51
+
+#+begin_src jupyter-python
+bf_da = partition_dataarray(list(nx.connected_components(G)), mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+
+fig, ax = plt.subplots()
+bf.plot(shuffle=True, ax=ax)
+# ax.set_ylim((35, 72))
+# ax.set_xlim((-20, 30))
+
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/24e88c34f0bd1c8e777085407b723863f9cb4172.png]]
+
+This is better!
+
+*** Axis parallel basis functions
+
+
+*** Inertial basis functions
+
+#+begin_src jupyter-python
+to_mask_eez_code = [0, 3, 9, 11, 14, 15, 21, 28]
+G = make_basis_graph(mean_fp_x_flux)
+
+node_list = [node_list_from_mask(countries_eez.country.values == i) for i in to_mask_eez_code]
+node_list.append(node_list_from_mask(~countries_eez.country.isin(to_mask_eez_code)))
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+ipart = inertial_partitioning([G.subgraph(c) for c in node_list], 250, verbose=False, balanced=False)
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+bf_da = partition_dataarray([p.nodes for p in ipart], mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+bf.plot(shuffle=True)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/9f5a45e4713ae2eac06d06c2f4f3281dde69584e.png]]
+
+* TODO Implement algorithms without using graphs
+** Axis parallel split
+
+First we want to find the "long axis".
+
+#+begin_src jupyter-python
+test_nodes = list(node_list[10])
+test_arr = np.array(test_nodes)
+print(test_arr[:10])
+#+end_src
+
+#+RESULTS:
+: [[ 84 306]
+:  [ 85 305]
+:  [ 85 306]
+:  [ 86 305]
+:  [ 86 306]
+:  [ 86 307]
+:  [ 87 305]
+:  [ 87 306]
+:  [ 87 307]
+:  [ 88 305]]
+
+#+begin_src jupyter-python
+print(test_arr.max(axis=0) - test_arr.min(axis=0))
+#+end_src
+
+#+RESULTS:
+: [12 14]
+
+We want to subtract column min from column max and find the index of the largest difference.
+
+#+begin_src jupyter-python
+def long_axis(nodes: list[tuple[int | float]]) -> int:
+    # to make this compatible with the old version
+    if isinstance(nodes, nx.Graph):
+        nodes = list(G.nodes)
+    if not nodes:
+        return 0
+
+    arr = np.array(nodes)
+    return np.argmax(arr.max(axis=0) - arr.min(axis=0))
+#+end_src
+
+#+RESULTS:
+
+
+#+begin_src jupyter-python
+long_axis(test_nodes)
+#+end_#+begin_src
+
+      #+end_src
+
+#+RESULTS:
+: np.int64(0)
+
+Now we just need to do the same for ~axis_parallel_split~:
+
+#+begin_src jupyter-python
+def axis_parallel_split(nodes: list[tuple[int, int]], axis: int, weights: np.ndarray | None = None, balanced: bool = True) -> tuple:
+    nodes = sorted(nodes, key=lambda n: (n[axis], n[1 - axis]))
+    if balanced and weights is not None:
+        weights = [weights[*n] for n in nodes]
+        idx = index_of_half_cumulative_sum(weights)
+    elif len(nodes) == 2:
+        idx = 0
+    else:
+        idx = len(nodes) // 2
+    return nodes[:idx+1], nodes[idx+1:]
+#+end_src
+
+#+RESULTS:
+
+Now we can make a function to do partitioning using some splitting function.
+
+#+begin_src jupyter-python
+from collections.abc import Callable
+
+
+NodeList = list[tuple[int, int]]
+
+
+def calc_total_weight(nodes: NodeList, weights: np.ndarray | None = None) -> int | float:
+    if weights is None:
+        return len(nodes)
+    return sum(weights[*n] for n in nodes)
+
+
+def partitioning(init_comps: list[NodeList], split_function: Callable, n_parts: int, weights: np.ndarray | None = None, verbose: bool = False, **split_kwargs) -> list[NodeList]:
+    q = PriorityQueue()
+
+    for comp in init_comps:
+        pcomp = PrioritizedItem(-calc_total_weight(comp, weights), comp)
+        q.put_nowait(pcomp)
+
+    done_components = []
+
+    n_components = len(init_comps)
+
+    while n_components < n_parts and q:
+        comp = q.get_nowait().item
+        subcomps = split_function(comp, weights=weights, **split_kwargs)
+
+        # retired this component if it isn't splitting
+        if any(len(scomp) == 0 for scomp in subcomps):
+            done_components.append(comp)
+            if verbose:
+                print(f"Couldn't split component of size {len(comp)} and weight {calc_total_weight(comp, weights)}")
+            continue
+
+        for scomp in subcomps:
+            if len(scomp) > 1:
+                q.put_nowait(PrioritizedItem(-calc_total_weight(scomp, weights), scomp))
+            else:
+                done_components.append(scomp)
+
+        n_components += 1
+
+    if verbose:
+        print("Number done:", len(done_components))
+        print()
+        print("size      weight")
+        print("====      ======")
+        for dc in done_components:
+            print(f"{len(dc):<10d}{calc_total_weight(dc, weights)}")
+
+        print("\nComponents still on queue:\n")
+        print("size      weight")
+        print("====      ======")
+
+    while not q.empty():
+        done_components.append(q.get_nowait().item)
+
+        if verbose:
+            print(f"{len(done_components[-1]):<10d}{calc_total_weight(done_components[-1], weights)}")
+
+    return done_components
+
+#+end_src
+
+#+RESULTS:
+
+Let's test with the node list we used above.
+
+#+begin_src jupyter-python
+def split_function(nodes: NodeList, weights: np.ndarray | None = None, balanced: bool = True) -> tuple[NodeList, NodeList]:
+    """Axis parallel split that automatically splits across longest axis."""
+    axis = long_axis(nodes)
+    result = axis_parallel_split(nodes, axis, weights, balanced)
+
+    # if balanced fails, try to fall back to unbalanced
+    if balanced is True and any(len(part) == 0 for part in result):
+        result = axis_parallel_split(nodes, axis, weights, balanced=False)
+
+    return result
+
+node_list = [node_list_from_mask(countries.country.values == i) for i in range(len(countries.name))]
+ap_part_test = partitioning(node_list, split_function=split_function, weights=mean_fp_x_flux.values, n_parts=250, balanced=False, verbose=False)
+#+end_src
+
+#+RESULTS:
+
+How many components did we start with?
+
+#+begin_src jupyter-python
+len(node_list)
+#+end_src
+
+#+RESULTS:
+: 104
+
+#+begin_src jupyter-python
+bf_da = partition_dataarray(ap_part_test, mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+
+fig, ax = plt.subplots()
+bf.plot(shuffle=True, ax=ax)
+ax.set_ylim((35, 72))
+ax.set_xlim((-20, 30))
+
+# ax.set_ylim((48, 60))
+# ax.set_xlim((-10, 5))
+
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+| -20.0 | 30.0 |
+[[file:./.ob-jupyter/1114ebd12dc68af4c8782779b0a5ff83e3c31e1a.png]]
+:END:
+
+
+Hmm it seems to only be splitting the UK and France. Let's check the weights of the various regions.
+
+
+It would be useful to know the partitions of each original region.
+#+begin_src jupyter-python
+from collections import defaultdict
+
+node_dict = {countries.name.values[i]: node_list[i] for i in range(len(node_list))}
+part_dict = defaultdict(list)
+
+
+for part in ap_part_test:
+    for name, nodes in node_dict.items():
+        if part[0] in nodes:
+            part_dict[name].append(part)
+            break
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+part_info = [{"name": countries.name.values[i],
+              "weight": total_weight(node_list[i], mean_fp_x_flux.values),
+              "n_parts": len(part_dict[countries.name.values[i]]),
+              "max_part_weight": max(total_weight(part, mean_fp_x_flux.values) for part in part_dict[countries.name.values[i]]),
+              }
+             for i in range(len(node_list))]
+df = pd.DataFrame(part_info)
+df.sort_values("weight", ascending=False).iloc[:20,:]
+#+end_src
+
+#+RESULTS:
+|     | name                                                 |     weight |   n_parts |   max_part_weight |
+|-----+------------------------------------------------------+------------+-----------+-------------------|
+|   7 | UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND | 10.9581    |        73 |         0.789362  |
+|  67 | FRANCE                                               |  5.03432   |        45 |         0.173988  |
+|  53 | IRELAND                                              |  4.24306   |        40 |         0.165117  |
+|   0 | OCEAN                                                |  1.93429   |        23 |         0.245544  |
+|   4 | UNITED STATES                                        |  1.09323   |         8 |         0.137654  |
+| 102 | ALGERIA                                              |  0.680966  |         6 |         0.144625  |
+|  34 | MOROCCO                                              |  0.49791   |         4 |         0.130131  |
+|  18 | SPAIN                                                |  0.470285  |         4 |         0.12047   |
+|  27 | PORTUGAL                                             |  0.191491  |         2 |         0.0959461 |
+|  89 | CANADA                                               |  0.145936  |         1 |         0.145936  |
+|  65 | GERMANY                                              |  0.12881   |         1 |         0.12881   |
+|  96 | BELGIUM                                              |  0.12795   |         1 |         0.12795   |
+|  44 | LIBYA                                                |  0.122178  |         1 |         0.122178  |
+|  33 | NETHERLANDS                                          |  0.112685  |         1 |         0.112685  |
+|  28 | POLAND                                               |  0.0507323 |         1 |         0.0507323 |
+|  50 | ITALY                                                |  0.0483477 |         1 |         0.0483477 |
+|  10 | TUNISIA                                              |  0.0346051 |         1 |         0.0346051 |
+|  14 | SWITZERLAND                                          |  0.0324277 |         1 |         0.0324277 |
+|  78 | DENMARK                                              |  0.0259069 |         1 |         0.0259069 |
+|  82 | CUBA                                                 |  0.017638  |         1 |         0.017638  |
+
+
+#+begin_src jupyter-python
+sorted([(len(part), float(total_weight(part, mean_fp_x_flux.values))) for part in part_dict["UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND"]], key=lambda x: x[0])
+#+end_src
+
+#+RESULTS:
+|  1 |   0.24958671629428864 |
+|  1 | 7.383045158348978e-05 |
+|  1 |  0.002271668752655387 |
+|  1 |    0.6454213261604309 |
+|  1 |     0.789362370967865 |
+|  1 |    0.2375698834657669 |
+|  1 |    0.1747022420167923 |
+|  1 |   0.03082738257944584 |
+|  1 |    0.3410012722015381 |
+|  1 |   0.20952607691287994 |
+|  1 |   0.01326509565114975 |
+|  1 |    0.5288704633712769 |
+|  1 |   0.26001307368278503 |
+|  1 |   0.27410897612571716 |
+|  1 |    0.3610762655735016 |
+|  1 |   0.12299896031618118 |
+|  1 |   0.11308687925338745 |
+|  1 |   0.13234581053256989 |
+|  1 |    0.2007124423980713 |
+|  1 |   0.13540422916412354 |
+|  1 |    0.2224266529083252 |
+|  1 |   0.18049032986164093 |
+|  1 |   0.17531836032867432 |
+|  1 |   0.15023723244667053 |
+|  1 |   0.14287333190441132 |
+|  1 |    0.1140497699379921 |
+|  1 |   0.18631911277770996 |
+|  1 |   0.02647056244313717 |
+|  1 |   0.21391832828521729 |
+|  1 |   0.07830565422773361 |
+|  1 |   0.09596133977174759 |
+|  1 |   0.09751490503549576 |
+|  1 |   0.11921899765729904 |
+|  1 |   0.10697686672210693 |
+|  1 |   0.08273550868034363 |
+|  1 |   0.04656728729605675 |
+|  1 |   0.13727892935276031 |
+|  1 |   0.08929518610239029 |
+|  1 |   0.09002494812011719 |
+|  1 |   0.06589942425489426 |
+|  2 |    0.1457701325416565 |
+|  2 |   0.13143980503082275 |
+|  2 |    0.1097451001405716 |
+|  2 |   0.10260682553052902 |
+|  2 |   0.09026619791984558 |
+|  2 |    0.0627250224351883 |
+|  3 |   0.16079284250736237 |
+|  3 |   0.14897337555885315 |
+|  3 |   0.11372444778680801 |
+|  3 |   0.07855250686407089 |
+|  3 |  0.045605242252349854 |
+|  3 |   0.03740203380584717 |
+|  4 |   0.08637511730194092 |
+|  4 |   0.07329610735177994 |
+|  4 |  0.033423230051994324 |
+|  6 |    0.1566629707813263 |
+|  6 |   0.14441001415252686 |
+|  8 |   0.13329815864562988 |
+| 10 |   0.14613473415374756 |
+| 10 |   0.09553840756416321 |
+| 10 |   0.09498360753059387 |
+| 10 |     0.065497986972332 |
+| 12 |   0.16470319032669067 |
+| 15 |   0.10393168032169342 |
+| 16 |   0.11146422475576401 |
+| 19 |   0.16325025260448456 |
+| 19 |   0.09673507511615753 |
+| 22 |   0.14201609790325165 |
+| 27 |   0.05368538200855255 |
+| 29 |   0.15884087979793549 |
+| 30 |    0.1580304652452469 |
+| 30 |    0.1409614235162735 |
+| 31 |    0.1631850004196167 |
+
+** TODO Testing "Deming regression"
+
+The Deming regression / orthogonal least squares coefficients seem wrong in some cases...
+
+#+begin_src jupyter-python
+def dem_reg_cost(points, weights, a, b) -> float:
+    cost = 0
+
+    for p, w in zip(points, weights):
+        cost += w * (p[1] - a * p[0] - b)**2
+
+    return cost / (1 + a**2)
+
+
+def deming_regression_coeff2(points, weights) -> tuple[float, float]:
+    """Return coefficients for Deming regression line."""
+    parr = np.array(points)
+    warr = np.array(weights).reshape(-1, 1)
+
+    wavgs = (parr * warr).sum(axis=0) / warr.sum()
+
+    m2 = (warr * (parr - wavgs)**2).sum(axis=0) # / warr.sum()
+    mxy = ((warr * (parr - wavgs))[:, 0] * (parr - wavgs)[:, 1]).sum() # / warr.sum()
+
+    a = (m2[1] - m2[0] + np.sign(m2[1] - m2[0]) * np.sqrt((m2[1] - m2[0])**2 + 4 * mxy**2)) / (2 * mxy)
+    b = wavgs[1] - a * wavgs[0]
+
+    a2 = -1 / a
+    b2 = wavgs[1] - a2 * wavgs[0]
+
+    if dem_reg_cost(points, weights, a, b) < dem_reg_cost(points, weights, a2, b2):
+        return a, b
+    return a2, b2
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+def idx_of_half_cumsum(weights: list) -> int:
+    sum1, sum2 = 0, sum(weights)
+    idx = 0
+
+    while sum1 < sum2:
+        sum1 += weights[idx]
+        sum2 -= weights[idx]
+        idx += 1
+
+    if (idx > 0):
+        old_sum1 = sum1 - weights[idx - 1]
+        old_sum2 = sum2 + weights[idx - 1]
+        if (sum1 - sum2) > (old_sum2 - old_sum1):
+            return idx - 1
+    return idx
+
+def _inertial_split_sorting(nodes: NodeList, weight_arr: np.ndarray) -> NodeList:
+    weights = [weight_arr[*n] for n in nodes]
+    a, b = deming_regression_coeff2(nodes, weights)
+    return sorted(nodes, key=lambda n: deming_x_value(a, b, n))
+
+def inertial_split(nodes: NodeList, weights: np.ndarray, balanced: bool = True):
+    if len(nodes) <= 1:
+        return nodes, []
+
+    with np.errstate(divide="raise"):
+        try:
+            nodes = _inertial_split_sorting(nodes, weights)
+        except FloatingPointError:
+            # divide by zero...
+            return split_function(nodes, weights, balanced=balanced)
+
+    if not balanced:
+        idx = len(nodes) // 2
+    else:
+        _weights = [weights[*n] for n in nodes]
+        idx = idx_of_half_cumsum(_weights)
+
+    return nodes[:idx], nodes[idx:]
+
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+weight_arr = np.arange(64).reshape(8, 8)
+weight_arr
+#+end_src
+
+#+RESULTS:
+|    |   0 |   1 |   2 |   3 |   4 |   5 |   6 |   7 |
+|----+-----+-----+-----+-----+-----+-----+-----+-----|
+|  0 |   0 |   1 |   2 |   3 |   4 |   5 |   6 |   7 |
+|  1 |   8 |   9 |  10 |  11 |  12 |  13 |  14 |  15 |
+|  2 |  16 |  17 |  18 |  19 |  20 |  21 |  22 |  23 |
+|  3 |  24 |  25 |  26 |  27 |  28 |  29 |  30 |  31 |
+|  4 |  32 |  33 |  34 |  35 |  36 |  37 |  38 |  39 |
+|  5 |  40 |  41 |  42 |  43 |  44 |  45 |  46 |  47 |
+|  6 |  48 |  49 |  50 |  51 |  52 |  53 |  54 |  55 |
+|  7 |  56 |  57 |  58 |  59 |  60 |  61 |  62 |  63 |
+
+#+begin_src jupyter-python
+#nodes = [(0, 7), (1, 6), (2, 5), (3, 4), (4, 3), (5, 2), (6, 1), (7, 0), (7, 7)]
+nodes = []
+for i in range(8):
+    for j in range(8):
+        if i + j >= 7:
+            nodes.append((i, j))
+
+plt.scatter([n[0] for n in nodes], [n[1] for n in nodes])
+plt.imshow(weight_arr)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.image.AxesImage at 0x14f09b110>
+[[file:./.ob-jupyter/d70ac342a626392501d7c96b883e92f51f9eddd0.png]]
+:END:
+
+
+#+begin_src jupyter-python
+a, b = deming_regression_coeff2(nodes, [weight_arr[*n] for n in nodes])
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+print(a, b)
+#+end_src
+
+
+#+RESULTS:
+: -1.7495128848279955 13.768221854772309
+
+#+begin_src jupyter-python
+split1, split2 = inertial_split(nodes, weight_arr)
+
+plt.scatter([n[0] for n in split1], [n[1] for n in split1], color="blue")
+plt.scatter([n[0] for n in split2], [n[1] for n in split2], color="orange")
+
+x = np.linspace(0,8, 10)
+plt.plot(x, a*x+b)
+
+_total_weight = sum(weight_arr[*n] for n in nodes)
+xmean = sum(weight_arr[*n] * n[0] for n in nodes) / _total_weight
+ymean = sum(weight_arr[*n] * n[1] for n in nodes) / _total_weight
+#print(xmean, ymean)
+plt.scatter(xmean, ymean, color="red")
+
+# plot projections onto regression line
+proj_x = [deming_x_value(a, b, n) for n in nodes]
+proj_y = [a * x + b for x in proj_x]
+plt.scatter(proj_x, proj_y, marker="x")
+
+
+
+for n, x in zip(nodes, proj_x):
+    plt.plot([x, n[0]], [a*x+b, n[1]], '-', color="green")
+#    plt.plot([x, x], [a*x+b, 8.5], '--', color="red")
+    plt.imshow(weight_arr)
+
+
+
+plt.ylim([8.5,-0.5])
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+| 8.5 | -0.5 |
+[[file:./.ob-jupyter/dff8bcf570e217da56621a9111cda1452934e4c2.png]]
+:END:
+
+The regression line should go through the centroid...
+
+
+Maybe there is something wrong with the computation of the weighted regression coefficients.
+
+Need to choose larger root in solution to regression coefficients...
+
+Is split balanced?
+
+#+begin_src jupyter-python
+print(sum(weight_arr[*n] for n in split1), sum(weight_arr[*n] for n in split2))
+print(sum(weight_arr[*n] for n in split1[:-1]), weight_arr[*split1[-1]] + sum(weight_arr[*n] for n in split2))
+#+end_src
+
+#+RESULTS:
+: 742 770
+: 706 806
+
+** Testing inertial partitioning
+
+#+begin_src jupyter-python
+node_list = [node_list_from_mask(countries.country.values == i) for i in range(len(countries.name))]
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+part_info = [{"name": countries.name.values[i],
+              "weight": calc_total_weight(node_list[i], mean_fp_x_flux.values),
+              }
+             for i in range(len(node_list))]
+df = pd.DataFrame(part_info)
+df.sort_values("weight", ascending=False).iloc[:20,:]
+#+end_src
+
+#+RESULTS:
+|     | name                                                 |     weight |
+|-----+------------------------------------------------------+------------|
+|   7 | UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND | 10.9581    |
+|  67 | FRANCE                                               |  5.03432   |
+|  53 | IRELAND                                              |  4.24306   |
+|   0 | OCEAN                                                |  1.93429   |
+|   4 | UNITED STATES                                        |  1.09323   |
+| 102 | ALGERIA                                              |  0.680966  |
+|  34 | MOROCCO                                              |  0.49791   |
+|  18 | SPAIN                                                |  0.470285  |
+|  27 | PORTUGAL                                             |  0.191491  |
+|  89 | CANADA                                               |  0.145936  |
+|  65 | GERMANY                                              |  0.12881   |
+|  96 | BELGIUM                                              |  0.12795   |
+|  44 | LIBYA                                                |  0.122178  |
+|  33 | NETHERLANDS                                          |  0.112685  |
+|  28 | POLAND                                               |  0.0507323 |
+|  50 | ITALY                                                |  0.0483477 |
+|  10 | TUNISIA                                              |  0.0346051 |
+|  14 | SWITZERLAND                                          |  0.0324277 |
+|  78 | DENMARK                                              |  0.0259069 |
+|  82 | CUBA                                                 |  0.017638  |
+
+#+begin_src jupyter-python
+node_list = [node_list_from_mask(countries.country.values == i) for i in range(len(countries.name))]
+i_part_test = partitioning(node_list, split_function=inertial_split, weights=mean_fp_x_flux.values, n_parts=250, verbose=False, balanced=False)
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+bf_da = partition_dataarray(i_part_test, mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+
+fig, ax = plt.subplots()
+bf.plot(shuffle=True, ax=ax)
+world.boundary.plot(ax=ax, linewidth=0.6, edgecolor='white')
+ax.set_ylim((35, 72))
+ax.set_xlim((-20, 30))
+# ax.set_ylim((48, 60))
+# ax.set_xlim((-10, 5))
+
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+| -20.0 | 30.0 |
+[[file:./.ob-jupyter/cf2d013f8ac693482cef3eaf42d92fef77a37a37.png]]
+:END:
+
+
+#+begin_src jupyter-python
+#bad_region = i_part_test[0].copy()
+a, b = deming_regression_coeff2(bad_region, [mean_fp_x_flux.values[*n] for n in bad_region])
+xvals = sorted([deming_x_value(a, b, n) for n in bad_region])
+yvals = [a * x + b for x in xvals]
+
+xidx = [n[0] for n in bad_region]
+yidx = [n[1] for n in bad_region]
+
+mask = xr.zeros_like(mean_fp_x_flux)
+
+for n in bad_region:
+    mask[dict(lat=n[0], lon=n[1])] = 1
+
+fig, ax = plt.subplots()
+(mean_fp_x_flux / mask).plot(ax=ax)
+world.boundary.plot(ax=ax, linewidth=0.6, edgecolor='white')
+ax.plot([mean_fp_x_flux.lon.values[int(y)] for y in yvals], [mean_fp_x_flux.lat.values[int(x)] for x in xvals], color="red")
+
+#ax.set_ylim((35, 72))
+#ax.set_xlim((-20, 30))
+ax.set_ylim((48, 60))
+ax.set_xlim((-10, 5))
+
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+| -10.0 | 5.0 |
+[[file:./.ob-jupyter/9082eb9f74cb665f768c76a0b023d176c1ac1030.png]]
+:END:
+
+Is this the line that minimizes the moment of inertia? ...yes now it looks correct.
+
+#+begin_src jupyter-python
+a, b = deming_regression_coeff2(bad_region, [mean_fp_x_flux.values[*n] for n in bad_region])
+
+cost = 0
+
+for n in bad_region:
+    cost += mean_fp_x_flux.values[*n] * (n[1] - a * n[0] - b)**2
+
+cost /= (1 + a**2)
+
+print(cost)
+#+end_src
+
+#+RESULTS:
+: 14.048485909195698
+
+
+If we take the perpendicular line with slope $-1 / a$ and recompute $b$, we get
+
+#+begin_src jupyter-python
+a2 = -1 / a
+
+W = sum(mean_fp_x_flux.values[*n] for n in bad_region)
+ybar = sum(n[1] * mean_fp_x_flux.values[*n] for n in bad_region) / W
+xbar = sum(n[0] * mean_fp_x_flux.values[*n] for n in bad_region) / W
+
+b2 = ybar - a2 * xbar
+
+cost = 0
+
+for n in bad_region:
+    cost += mean_fp_x_flux.values[*n] * (n[1] - a2 * n[0] - b2)**2
+
+cost /= (1 + a2**2)
+
+print(cost)
+#+end_src
+
+#+RESULTS:
+: 273.2481783598995
+
+#+begin_src jupyter-python
+node_dict = {countries.name.values[i]: node_list[i] for i in range(len(node_list))}
+part_dict = defaultdict(list)
+
+
+for part in i_part_test:
+    for name, nodes in node_dict.items():
+        if part[0] in nodes:
+            part_dict[name].append(part)
+            break
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+part_info = [{"name": countries.name.values[i],
+              "weight": calc_total_weight(node_list[i], mean_fp_x_flux.values),
+              "n_parts": len(part_dict[countries.name.values[i]]),
+              "max_part_weight": max(calc_total_weight(part, mean_fp_x_flux.values) for part in part_dict[countries.name.values[i]]),
+              }
+             for i in range(len(node_list))]
+df = pd.DataFrame(part_info)
+df.sort_values("weight", ascending=False).iloc[:20,:]
+#+end_src
+
+#+RESULTS:
+|     | name                                                 |     weight |   n_parts |   max_part_weight |
+|-----+------------------------------------------------------+------------+-----------+-------------------|
+|   7 | UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND | 10.9581    |        56 |         0.789362  |
+|  67 | FRANCE                                               |  5.03432   |        33 |         0.178996  |
+|  53 | IRELAND                                              |  4.24306   |        31 |         0.214058  |
+|   0 | OCEAN                                                |  1.93429   |        14 |         0.245544  |
+|   4 | UNITED STATES                                        |  1.09323   |         8 |         0.137042  |
+| 102 | ALGERIA                                              |  0.680966  |         4 |         0.17307   |
+|  34 | MOROCCO                                              |  0.49791   |         4 |         0.127698  |
+|  18 | SPAIN                                                |  0.470285  |         4 |         0.118127  |
+|  27 | PORTUGAL                                             |  0.191491  |         1 |         0.191491  |
+|  89 | CANADA                                               |  0.145936  |         1 |         0.145936  |
+|  65 | GERMANY                                              |  0.12881   |         1 |         0.12881   |
+|  96 | BELGIUM                                              |  0.12795   |         1 |         0.12795   |
+|  44 | LIBYA                                                |  0.122178  |         1 |         0.122178  |
+|  33 | NETHERLANDS                                          |  0.112685  |         1 |         0.112685  |
+|  28 | POLAND                                               |  0.0507323 |         1 |         0.0507323 |
+|  50 | ITALY                                                |  0.0483477 |         1 |         0.0483477 |
+|  10 | TUNISIA                                              |  0.0346051 |         1 |         0.0346051 |
+|  14 | SWITZERLAND                                          |  0.0324277 |         1 |         0.0324277 |
+|  78 | DENMARK                                              |  0.0259069 |         1 |         0.0259069 |
+|  82 | CUBA                                                 |  0.017638  |         1 |         0.017638  |
+
+
+#+begin_src jupyter-python
+sorted([(len(part), float(calc_total_weight(part, mean_fp_x_flux.values))) for part in part_dict["UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND"]], key=lambda x: x)
+#+end_src
+
+#+RESULTS:
+|  1 |   0.01326509565114975 |
+|  1 |  0.028052037581801414 |
+|  1 |  0.033347323536872864 |
+|  1 |   0.08929518610239029 |
+|  1 |    0.1140497699379921 |
+|  1 |   0.11921899765729904 |
+|  1 |   0.14287333190441132 |
+|  1 |    0.1747022420167923 |
+|  1 |   0.17531836032867432 |
+|  1 |   0.18049032986164093 |
+|  1 |   0.18631911277770996 |
+|  1 |    0.2007124423980713 |
+|  1 |   0.20952607691287994 |
+|  1 |   0.21391832828521729 |
+|  1 |    0.2224266529083252 |
+|  1 |    0.2375698834657669 |
+|  1 |   0.24958671629428864 |
+|  1 |   0.26001307368278503 |
+|  1 |   0.27410897612571716 |
+|  1 |    0.3410012722015381 |
+|  1 |    0.3610762655735016 |
+|  1 |    0.5288704633712769 |
+|  1 |    0.6454213261604309 |
+|  1 |     0.789362370967865 |
+|  2 |   0.12175379693508148 |
+|  2 |    0.1559063047170639 |
+|  2 |    0.1587979793548584 |
+|  2 |   0.16019858419895172 |
+|  2 |   0.17118112742900848 |
+|  2 |   0.18971237540245056 |
+|  3 |  0.033172883093357086 |
+|  3 |   0.18772125244140625 |
+|  3 |   0.19894394278526306 |
+|  3 |    0.1999780237674713 |
+|  4 |   0.14483410120010376 |
+|  4 |    0.1606121063232422 |
+|  4 |    0.1681978553533554 |
+|  4 |   0.16821561753749847 |
+|  4 |   0.17180068790912628 |
+|  4 |   0.18452279269695282 |
+|  6 | 0.0013904580846428871 |
+|  7 |    0.1770021617412567 |
+|  9 |   0.15531839430332184 |
+| 10 |    0.1672523319721222 |
+| 11 |   0.17830458283424377 |
+| 13 |   0.17328496277332306 |
+| 13 |   0.17649930715560913 |
+| 15 |   0.17510534822940826 |
+| 20 |    0.1778896003961563 |
+| 25 |    0.1819678544998169 |
+| 28 |   0.17242585122585297 |
+| 28 |    0.1727711707353592 |
+| 28 |   0.17881160974502563 |
+| 32 |   0.17021898925304413 |
+| 32 |   0.17157837748527527 |
+| 43 |     0.162239208817482 |
+
+* Making a graph of the partition
+
+Using the original graph to finding neighbouring partitions would be useful for further optimisations.
+
+** Setting up an initial partition
+Let's start with a partition of the map, e.g. one based on the country file.
+
+First, let's get a list of countries/regions that should not be split.
+
+#+begin_src jupyter-python
+for i, name in countries.name.to_series().sort_values().items():
+    print(f"{i:<4d}{name}")
+#+end_src
+
+#+RESULTS:
+#+begin_example
+103 ALBANIA
+102 ALGERIA
+101 ANDORRA
+5   ANGUILLA
+100 AUSTRIA
+99  BAHAMAS
+98  BARBADOS
+97  BELARUS
+96  BELGIUM
+95  BELIZE
+94  BENIN
+93  BOSNIA AND HERZEGOVINA
+92  BULGARIA
+91  BURKINA FASO
+88  CABO VERDE
+90  CAMEROON
+89  CANADA
+87  CENTRAL AFRICAN REPUBLIC
+86  CHAD
+85  COLOMBIA
+84  COSTA RICA
+83  CROATIA
+82  CUBA
+81  CYPRUS
+79  CZECHIA
+78  DENMARK
+75  DOMINICA
+74  DOMINICAN REPUBLIC
+73  EGYPT
+72  EL SALVADOR
+71  ERITREA
+70  ESTONIA
+69  ETHIOPIA
+77  FAROE ISLANDS
+68  FINLAND
+67  FRANCE
+66  GAMBIA
+65  GERMANY
+64  GHANA
+63  GREECE
+76  GREENLAND
+62  GRENADA
+61  GUATEMALA
+60  GUINEA
+59  GUINEA-BISSAU
+58  HAITI
+57  HONDURAS
+56  HUNGARY
+55  ICELAND
+54  IRAQ
+53  IRELAND
+6   ISLE OF MAN
+51  ISRAEL
+50  ITALY
+49  JAMAICA
+48  JORDAN
+47  KOSOVO
+46  LATVIA
+45  LEBANON
+44  LIBYA
+43  LITHUANIA
+42  LUXEMBOURG
+41  MACEDONIA
+40  MALI
+39  MAURITANIA
+38  MEXICO
+37  MOLDOVA
+36  MONTENEGRO
+34  MOROCCO
+80  N. CYPRUS
+33  NETHERLANDS
+32  NICARAGUA
+31  NIGER
+30  NIGERIA
+29  NORWAY
+0   OCEAN
+52  PALESTINE
+28  POLAND
+27  PORTUGAL
+3   PUERTO RICO
+26  ROMANIA
+25  RUSSIAN FEDERATION
+24  SAINT LUCIA
+35  SAMOA
+23  SAUDI ARABIA
+22  SENEGAL
+21  SERBIA
+19  SLOVAKIA
+20  SLOVENIA
+16  SOUTH SUDAN
+18  SPAIN
+17  SUDAN
+15  SWEDEN
+14  SWITZERLAND
+13  SYRIAN ARAB REPUBLIC
+12  TOGO
+11  TRINIDAD AND TOBAGO
+10  TUNISIA
+9   TURKEY
+8   UKRAINE
+7   UNITED KINGDOM OF GREAT BRITAIN AND NORTHERN IRELAND
+4   UNITED STATES
+1   VENEZUELA
+2   VIRGIN ISLANDS
+#+end_example
+
+#+begin_src jupyter-python
+# node_list = [node_list_from_mask(countries.country.values == i) for i in to_mask_code]
+# node_list.append(node_list_from_mask(~countries.country.isin(to_mask_code)))
+#mask_idxs = list(range(len(countries.name.values)))
+mask_idxs = [0, 7, 33, 50, 65, 67, 96]
+
+node_list = [node_list_from_mask(countries.country.values == i) for i in mask_idxs]
+node_list.append(node_list_from_mask(~countries.country.isin(mask_idxs)))
+bf_da = partition_dataarray(node_list, mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+
+fig, ax = plt.subplots()
+bf.plot(shuffle=True, ax=ax)
+# ax.set_ylim((35, 72))
+# ax.set_xlim((-20, 30))
+
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/22c85646d5b79f8c916fec7640e4a54133b8b07a.png]]
+
+
+We'll make a fully connected graph so we can use these connections later.
+We might want to separate our initial components here so we don't cross e.g. country boundaries.
+#+begin_src jupyter-python
+#G = make_basis_graph(mean_fp_x_flux)
+G = make_basis_graph(mean_fp_x_flux, *(countries.country.values == i for i in mask_idxs))
+#+end_src
+
+#+RESULTS:
+
+Partition using the node list.
+#+begin_src jupyter-python
+ap_part = partitioning(node_list, split_function=split_function, weights=mean_fp_x_flux.values, n_parts=250, balanced=True, verbose=False)
+#+end_src
+
+#+RESULTS:
+
+Let's add country boundaries.
+#+begin_src shell
+mkdir ~/Documents/maps
+wget -q -O ~/Documents/maps/natural_earth_50.zip "https://naturalearth.s3.amazonaws.com/50m_cultural/ne_50m_admin_0_countries.zip"
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+import geopandas as gpd
+
+world = gpd.read_file("~/Documents/maps/natural_earth_50.zip")
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+bf_da = partition_dataarray(ap_part, mean_fp_x_flux.lat, mean_fp_x_flux.lon)
+bf = BasisFunctions(bf_da, xr.ones_like(bf_da).expand_dims({"time": [pd.to_datetime("2019-01-01")]}))
+
+fig, ax = plt.subplots()
+bf.plot(shuffle=True, ax=ax)
+world.boundary.plot(ax=ax, linewidth=0.6, edgecolor='white')
+#ax.set_ylim((35, 72))
+#ax.set_xlim((-20, 30))
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <Axes: xlabel='lon [degrees_east]', ylabel='lat [degrees_north]'>
+[[file:./.ob-jupyter/1239c54567faef9f3b3d7a0ac1865a3d9f0db226.png]]
+:END:
+
+
+To find edges from one component to another, we could look at the boundary of a component, then find components with nodes from the boundary.
+
+First we'll convert the node lists to sets for faster lookup.
+
+#+begin_src jupyter-python
+part_sets = [set(part) for part in ap_part]
+#+end_src
+
+#+RESULTS:
+
+We'll use the indices of the components in the list of parts to label nodes.
+#+begin_src jupyter-python
+edges = []
+
+for i, part in enumerate(part_sets):
+    boundary = list(nx.node_boundary(G, part))
+
+    for j, part2 in enumerate(part_sets):
+        # avoid duplicates
+        if j >= i:
+            continue
+
+        if any(n in part2 for n in boundary):
+            edges.append((i, j))
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+comp_graph = nx.Graph()
+comp_graph.add_nodes_from(range(len(part_sets)))
+comp_graph.add_edges_from(edges)
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+comp_centroids = [np.array(list(part)).mean(axis=0) for part in part_sets]
+pos = {i: (c[1], c[0]) for i, c in enumerate(comp_centroids)}
+
+nx.draw(comp_graph, pos=pos, node_size=2)
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/b3e661cd04b3e8c9833fe644bb12b727abfd2932.png]]
+
+** Combining and splitting again
+
+We could try to combine neighboring regions and split them again, to find combinations that might be better than the greedy algorithm produced.
+
+*** Metric for improving the basis functions
+To do this, we need some measure of how good our basis functions are. One option is to look at the deviation from a perfectly balance partition.
+
+The average weight across 250 basis regions is
+
+#+begin_src jupyter-python
+mean_fp_x_flux.sum().values / 250
+#+end_src
+
+#+RESULTS:
+: np.float32(0.104593776)
+
+Another criteria we might look at is the "eccentricity" of the regions. We would prefer regions that are not too thin.
+
+*** Data structure for components
+
+We'll use our component graph and put the set of nodes for each component into a node attribute.
+
+#+begin_src jupyter-python
+for n, part in zip(G.nodes, part_sets):
+    G.nodes[n]["nodes"] = part
+#+end_src
+
+#+RESULTS:
+
+*** Method for modifying the partition
+
+We don't actually need to track the total score of a partition, as long as we know how the score changes for a given "move".
+
+To keep the same number of regions (parts), we can combine two neighbouring regions, then split them again. If the old split is better, we keep it, otherwise we update the partition graph.
+
+To update the partition graph, we need to
+1. remove the two old regions and their edges from the graph
+2. insert the new regions as nodes with the same numbers as the two old regions (keep same number to avoid large node numbers)
+3. add edges to connect the new regions to the other regions in the partition graph.
+
+
+
+*** Cost functions
+
+#+begin_src jupyter-python
+def partition_cost(partition: list[NodeList], weight_arr: np.ndarray) -> float:
+    n = len(partition)
+    avg_weight = weight_arr.sum() / n
+    part_weights = [calc_total_weight(part, weight_arr) for part in partition]
+    return sum(abs(pw - avg_weight) for pw in part_weights) / n
+#+end_src
+
+#+RESULTS:
+
+For 250 basis functions, the average weight is
+
+#+begin_src jupyter-python
+mean_fp_x_flux.values.sum() / 250
+#+end_src
+
+#+RESULTS:
+: np.float32(0.104593776)
+
+Inertial:
+#+begin_src jupyter-python
+partition_cost(i_part_test, mean_fp_x_flux.values)
+#+end_src
+
+#+RESULTS:
+: np.float32(0.07741593)
+
+Inertial, unbalanced:
+#+begin_src jupyter-python
+partition_cost(i_part_test, mean_fp_x_flux.values)
+#+end_src
+
+#+RESULTS:
+: np.float32(0.092781216)
+
+Balanced, axis-parallel:
+#+begin_src jupyter-python
+partition_cost(ap_part_test, mean_fp_x_flux.values)
+#+end_src
+
+#+RESULTS:
+: np.float32(0.08588471)
+
+Unbalanced axis-parallel:
+#+begin_src jupyter-python
+partition_cost(ap_part_test, mean_fp_x_flux.values)
+#+end_src
+
+#+RESULTS:
+: np.float32(0.09350085)
+
+
+What part of this is due to large weights?
+
+#+begin_src jupyter-python
+def irreducible_partition_cost(weight_arr: np.ndarray, n: int, thres: float = 1.1) -> float:
+    avg_weight = weight_arr.sum() / n
+    big_weights = weight_arr[weight_arr > thres * avg_weight]
+    return np.sum(np.abs(big_weights - avg_weight)) / n
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+irreducible_partition_cost(mean_fp_x_flux.values, 250, thres=2.0)
+#+end_src
+
+#+RESULTS:
+: np.float32(0.0138409715)
+
+So a fair amount of the cost is due to large weights.
