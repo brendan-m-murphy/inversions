@@ -5,12 +5,22 @@ In particular, helpers for working with fluxy.
 
 from pathlib import Path
 
+import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 from fluxy.io import edit_vars_and_attributes, read_config_files
+
+
+world = gpd.read_file("~/Documents/maps/natural_earth_50.zip")
+
+
+def plot_country_boundaries(ax, **kwargs) -> None:
+    options = {"linewidth": 0.6, "edgecolor": "white"}
+    options.update(kwargs)
+    world.boundary.plot(ax=ax, **options)
 
 
 def _handle_multi_path_and_glob_netcdf(

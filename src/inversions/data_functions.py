@@ -2,7 +2,7 @@ from functools import partial
 import logging
 from pathlib import Path
 import re
-from typing import Any, Callable, ChainMap, Iterable, cast, Literal, Mapping, overload
+from typing import Any, cast, Callable, ChainMap, Iterable, cast, Literal, Mapping, overload
 from typing_extensions import Self
 import warnings
 
@@ -37,6 +37,41 @@ from openghg_inversions.inversion_data.serialise import (
 
 read_ini = partial(hbmcmc_extract_param, mcmc_type="fixedbasisMCMC", print_param=False)
 
+
+class MatchedLengthList:
+    """Attribute converted to list with same length as given attribute."""
+    def __init__(self, to_match: str) -> None:
+        self.to_match = to_match
+
+    def __set_name__(self, cls, name):
+        self.key = name
+
+    @overload
+    def __get__(self, instance: None, cls: None) -> Self: ...
+
+    @overload
+    def __get__(self, instance: object, cls: type[object]) -> list: ...
+
+    def __get__(self, instance: object | None, cls: type[object] | None) -> list | Self:
+        if instance is None:
+            return self
+        return cast(list, instance.__dict__[self.key])
+
+    def __set__(self, instance, value):
+        if self.to_match not in instance.__dict__:
+            raise AttributeError(f"You must set self.{self.to_match} first to match the length of that attribute.")
+
+        length = len(instance.__dict__[self.to_match])
+        list_value = convert_to_list(value, length=length, name=self.key)
+        instance.__dict__[self.key] = list_value
+
+    def __delete__(self, instance):
+        if self.key not in instance.__dict__:
+            raise AttributeError(self.key)
+        del instance.__dict__[self.key]
+
+
+
 # TODO: add functions for parsing data params from ini file into data objects
 # then make constructors for MultiObs and MultiFootprint use these
 # with a class method for parsing these data objects
@@ -45,16 +80,21 @@ read_ini = partial(hbmcmc_extract_param, mcmc_type="fixedbasisMCMC", print_param
 
 
 class MultiObs(ObsData):
+    _inlets = MatchedLengthList(to_match="_sites")
+    _obs_data_levels = MatchedLengthList(to_match="_sites")
+    _instruments = MatchedLengthList(to_match="_sites")
+    _averaging_periods = MatchedLengthList(to_match="_sites")
+
     def __init__(
         self,
         species: str,
         start_date: str,
         end_date: str,
         sites: list[str],
-        inlets: list[str | None],
-        obs_data_levels: list[str | None],
-        instruments: list[str | None],
-        averaging_periods: list[str | None],
+        inlets: list[str | slice | None] | str | slice | None = None,
+        obs_data_levels: list[str | None] | str | None = None,
+        instruments: list[str | None] | str | None = None,
+        averaging_periods: list[str | None] | str | None = None,
         calibration_scale: str | None = None,
         store=None,
         obs_store=None,
@@ -63,12 +103,15 @@ class MultiObs(ObsData):
         self.species = species
         self.start_date = start_date
         self.end_date = end_date
+
         self._sites = sites
         self._inlets = inlets
+        self._instruments = instruments
+        self._obs_data_levels = obs_data_levels
 
         self.store = obs_store or store
 
-        self.average = averaging_periods
+        self._averaging_periods = averaging_periods
 
         valid_kwargs, _ = split_function_inputs(kwargs, get_obs_surface)
         self.kwargs = valid_kwargs
@@ -78,6 +121,8 @@ class MultiObs(ObsData):
         self.obs = {}
         self.sites = []
         self.inlets = []
+        self.obs_data_levels = []
+        self.instruments = []
 
         keep_variables = [
             f"{species}",
@@ -92,8 +137,9 @@ class MultiObs(ObsData):
         # will set these after we fetch the first dataset
         target_units = None
 
+        # ignore type hints here because typing a descriptor is annoying
         for site, inlet, avg, data_level, instrument in zip(
-            self._sites, self._inlets, self.average, obs_data_levels, instruments
+            self._sites, self._inlets, self._averaging_periods, self._obs_data_levels, self._instruments  # type: ignore
         ):
             try:
                 obs = get_obs_surface(
@@ -116,9 +162,13 @@ class MultiObs(ObsData):
                     f"Couldn't get obs for site {site} and inlet {inlet} from store {self.store}: {e}"
                 )
             else:
+                assert isinstance(obs, ObsData)  # for mypy...
+
                 self.obs[site] = obs
                 self.sites.append(site)
                 self.inlets.append(inlet)
+                self.obs_data_levels.append(data_level)
+                self.instruments.append(instrument)
 
                 if target_units is None:
                     target_units = {
@@ -141,6 +191,31 @@ class MultiObs(ObsData):
             [x.data.expand_dims(site=[site]) for site, x in self.obs.items()],
             dim="site",
         )
+
+    @classmethod
+    def from_ini_params(cls, params: dict, **kwargs) -> Self:
+        params = params | kwargs
+        obs_params, _ = split_function_inputs(params, cls.__init__)
+
+        if "sites" not in obs_params:
+            raise ValueError("'sites' not found in given params.")
+
+        if isinstance(obs_params["sites"], str):
+            obs_params["sites"] = [obs_params["sites"]]
+            nsites = 1
+        else:
+            nsites = len(obs_params["sites"])
+
+        obs_params["inlets"] = convert_to_list(params.get("inlet"), length=nsites, name="inlet")
+        obs_params["instruments"] = convert_to_list(params.get("instrument"), length=nsites, name="instrument")
+        obs_params["averaging_periods"] = convert_to_list(params.get("averaging_period"), length=nsites, name="averaging_period")
+        obs_params["obs_data_levels"] = convert_to_list(params.get("obs_data_level"), length=nsites, name="obs_data_level")
+
+        return cls(**obs_params)
+
+    @classmethod
+    def from_ini(cls, ini_file: str | Path, **kwargs) -> Self:
+        return cls.from_ini_params(read_ini(str(ini_file)), **kwargs)
 
     def combined_ds(self) -> xr.Dataset:
         return self._combined_ds
@@ -238,6 +313,30 @@ class MultiFootprint:
             [x.data.expand_dims(site=[site]) for site, x in self.footprints.items()],
             dim="site",
         )
+
+    @classmethod
+    def from_ini_params(cls, params: dict, **kwargs) -> Self:
+        params = params | kwargs
+        fp_params, _ = split_function_inputs(params, cls.__init__)
+
+        if "sites" not in fp_params:
+            raise ValueError("'sites' not found in given params.")
+
+        if isinstance(fp_params["sites"], str):
+            fp_params["sites"] = [fp_params["sites"]]
+            nsites = 1
+        else:
+            nsites = len(fp_params["sites"])
+
+        fp_params["fp_heights"] = convert_to_list(params.get("fp_height"), length=nsites, name="fp_height")
+        fp_params["met_models"] = convert_to_list(params.get("met_model"), length=nsites, name="met_model")
+        fp_params["models"] = convert_to_list(params.get("fp_model"), length=nsites, name="fp_model")
+
+        return cls(**fp_params)
+
+    @classmethod
+    def from_ini(cls, ini_file: str | Path, **kwargs) -> Self:
+        return cls.from_ini_params(read_ini(str(ini_file)), **kwargs)
 
     def combined_ds(self) -> xr.Dataset:
         return self._combined_ds
