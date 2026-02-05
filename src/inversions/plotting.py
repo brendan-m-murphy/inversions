@@ -13,8 +13,10 @@ import xarray as xr
 
 from fluxy.io import edit_vars_and_attributes, read_config_files
 
+from inversions.data.download import get_world_map_path
 
-world = gpd.read_file("~/Documents/maps/natural_earth_50.zip")
+
+world = gpd.read_file(get_world_map_path())
 
 
 def plot_country_boundaries(ax, **kwargs) -> None:
