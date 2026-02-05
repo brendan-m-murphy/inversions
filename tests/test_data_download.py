@@ -59,4 +59,5 @@ def test_download_natural_earth_data_downloads_if_missing(tmp_path):
         assert result == data_file
         # Should have called urlretrieve
         mock_retrieve.assert_called_once()
-        assert "naturalearth" in mock_retrieve.call_args[0][0]
+        # Verify the URL is correct
+        assert mock_retrieve.call_args[0][0] == "https://naciscdn.org/naturalearth/50m/cultural/ne_50m_admin_0_countries.zip"

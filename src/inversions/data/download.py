@@ -1,7 +1,10 @@
 """Helper functions for downloading and managing geographic data."""
 
+import logging
 import urllib.request
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def download_natural_earth_data(data_dir: Path | None = None) -> Path:
@@ -37,9 +40,9 @@ def download_natural_earth_data(data_dir: Path | None = None) -> Path:
     # Natural Earth 1:50m Cultural Vectors download URL
     url = "https://naciscdn.org/naturalearth/50m/cultural/ne_50m_admin_0_countries.zip"
     
-    print(f"Downloading Natural Earth data to {data_file}...")
+    logger.info(f"Downloading Natural Earth data to {data_file}...")
     urllib.request.urlretrieve(url, data_file)
-    print("Download complete.")
+    logger.info("Download complete.")
     
     return data_file
 
@@ -53,9 +56,4 @@ def get_world_map_path() -> Path:
         Path to the natural_earth_50.zip file.
     """
     data_dir = Path(__file__).parent
-    data_file = data_dir / "natural_earth_50.zip"
-    
-    if not data_file.exists():
-        return download_natural_earth_data(data_dir)
-    
-    return data_file
+    return download_natural_earth_data(data_dir)
